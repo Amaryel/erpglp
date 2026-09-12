@@ -1,0 +1,6 @@
+{
+  "name": "ErpGLP",
+  "description": "Sistema de gestão completo para revenda e entrega de GLP, botijões cheios e vazios, caixa, fiado e auditoria.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
