@@ -355,61 +355,75 @@ export const UsersManagementView: React.FC = () => {
 
                     <td className="p-3.5 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        {/* Bloquear / Desbloquear (Disponível apenas para Superadmin, e não no próprio superadmin) */}
-                        {isSuperadmin && !isSuper && (
-                          <button
-                            onClick={() => handleToggleBlock(u)}
-                            title={isBlocked ? 'Desbloquear Usuário' : 'Bloquear Usuário'}
-                            className={`p-1.5 rounded-lg border transition-all text-xs font-bold flex items-center gap-1 ${
-                              isBlocked
-                                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300'
-                                : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200'
-                            }`}
-                          >
-                            {isBlocked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                            <span className="hidden sm:inline">{isBlocked ? 'Desbloquear' : 'Bloquear'}</span>
-                          </button>
-                        )}
+                        {/* Se o usuário listado for superadmin e o usuário logado NÃO for superadmin: BLOQUEIO TOTAL */}
+                        {isSuper && !isSuperadmin ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
+                            <Lock className="w-3 h-3 text-amber-600" />
+                            <span>Protegido (Superadmin)</span>
+                          </span>
+                        ) : (
+                          <>
+                            {/* Bloquear / Desbloquear (Disponível apenas para Superadmin, e não no próprio superadmin) */}
+                            {isSuperadmin && !isSuper && (
+                              <button
+                                onClick={() => handleToggleBlock(u)}
+                                title={isBlocked ? 'Desbloquear Usuário' : 'Bloquear Usuário'}
+                                className={`p-1.5 rounded-lg border transition-all text-xs font-bold flex items-center gap-1 ${
+                                  isBlocked
+                                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300'
+                                    : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200'
+                                }`}
+                              >
+                                {isBlocked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                                <span className="hidden sm:inline">{isBlocked ? 'Desbloquear' : 'Bloquear'}</span>
+                              </button>
+                            )}
 
-                        {/* Redefinir Senha */}
-                        <button
-                          onClick={() => {
-                            setSelectedUser(u);
-                            setResetPasswordValue('');
-                            setIsResetPasswordOpen(true);
-                          }}
-                          title="Redefinir Senha"
-                          className="p-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors"
-                        >
-                          <KeyRound className="w-3.5 h-3.5" />
-                        </button>
+                            {/* Redefinir Senha */}
+                            {(isSuperadmin || !isSuper) && (
+                              <button
+                                onClick={() => {
+                                  setSelectedUser(u);
+                                  setResetPasswordValue('');
+                                  setIsResetPasswordOpen(true);
+                                }}
+                                title="Redefinir Senha"
+                                className="p-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors"
+                              >
+                                <KeyRound className="w-3.5 h-3.5" />
+                              </button>
+                            )}
 
-                        {/* Editar */}
-                        <button
-                          onClick={() => {
-                            setSelectedUser(u);
-                            setEditName(u.name);
-                            setEditRole(u.role);
-                            setIsEditOpen(true);
-                          }}
-                          title="Editar Usuário"
-                          className="p-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
+                            {/* Editar */}
+                            {(isSuperadmin || !isSuper) && (
+                              <button
+                                onClick={() => {
+                                  setSelectedUser(u);
+                                  setEditName(u.name);
+                                  setEditRole(u.role);
+                                  setIsEditOpen(true);
+                                }}
+                                title="Editar Usuário"
+                                className="p-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
 
-                        {/* Excluir (Não pode excluir superadmin) */}
-                        {!isSuper && (
-                          <button
-                            onClick={() => {
-                              setSelectedUser(u);
-                              setIsDeleteConfirmOpen(true);
-                            }}
-                            title="Excluir Usuário"
-                            className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                            {/* Excluir (Disponível apenas para Superadmin em usuários comuns) */}
+                            {isSuperadmin && !isSuper && (
+                              <button
+                                onClick={() => {
+                                  setSelectedUser(u);
+                                  setIsDeleteConfirmOpen(true);
+                                }}
+                                title="Excluir Usuário"
+                                className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </>
                         )}
                       </div>
                     </td>
@@ -483,6 +497,9 @@ export const UsersManagementView: React.FC = () => {
                   <option value="operador">Operador (Vendas, Estoque, Entregas)</option>
                   <option value="admin">Administrador (Controle Total de Operações)</option>
                   <option value="entregador">Entregador (Apenas Rota e Entregas)</option>
+                  {isSuperadmin && (
+                    <option value="superadmin">Superadmin (Acesso Irrestrito & Banco de Dados)</option>
+                  )}
                 </select>
               </div>
 
@@ -568,6 +585,9 @@ export const UsersManagementView: React.FC = () => {
                     <option value="operador">Operador (Vendas, Estoque, Entregas)</option>
                     <option value="admin">Administrador (Controle Total)</option>
                     <option value="entregador">Entregador</option>
+                    {isSuperadmin && (
+                      <option value="superadmin">Superadmin (Acesso Irrestrito & Banco de Dados)</option>
+                    )}
                   </select>
                 </div>
               )}

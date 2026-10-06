@@ -27,6 +27,7 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { useAuth } from '../context/AuthContext';
 import {
   getStoredSupabaseConfig,
   saveStoredSupabaseConfig,
@@ -36,6 +37,9 @@ import {
 } from '../lib/supabase';
 
 export const ConfigView: React.FC = () => {
+  const { currentUser } = useAuth();
+  const isSuperadmin = currentUser?.role === 'superadmin';
+
   const {
     settings,
     updateSettings,
@@ -326,202 +330,224 @@ export const ConfigView: React.FC = () => {
         </div>
       )}
 
-      {/* SECTION 1: SUPABASE ONLINE DATABASE INTEGRATION (PROMINENT) */}
-      <div className="bg-gradient-to-br from-slate-900 via-slate-850 to-slate-900 rounded-3xl p-5 sm:p-6 text-white border border-slate-800 shadow-lg space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-inner shrink-0">
-              <Database className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base sm:text-lg font-black text-white">
-                  Banco de Dados Online (Supabase)
-                </h2>
-                <span
-                  className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
-                    isOnlineDb
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                  }`}
-                >
-                  {isOnlineDb ? '🟢 Conectado & Online' : '🟡 Modo Local (Offline)'}
-                </span>
+      {/* SECTION 1: SUPABASE ONLINE DATABASE INTEGRATION (PROMINENT - EXCLUSIVE TO SUPERADMIN) */}
+      {isSuperadmin ? (
+        <div className="bg-gradient-to-br from-slate-900 via-slate-850 to-slate-900 rounded-3xl p-5 sm:p-6 text-white border border-slate-800 shadow-lg space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-inner shrink-0">
+                <Database className="w-6 h-6" />
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Garante que qualquer celular, tablet ou computador acesse a mesma base de dados em tempo real.
-              </p>
-            </div>
-          </div>
-
-          {isOnlineDb && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={reloadFromOnlineDb}
-                disabled={dbSyncState === 'syncing'}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 flex items-center gap-1.5 transition-colors"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${dbSyncState === 'syncing' ? 'animate-spin' : ''}`} />
-                <span>Atualizar Nuvem</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleDisconnectSupabase}
-                className="px-3 py-1.5 bg-red-950/60 hover:bg-red-900/80 text-red-300 text-xs font-bold rounded-xl border border-red-800/60 transition-colors"
-              >
-                Desconectar
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Database feedback banner */}
-        {dbTestResult && (
-          <div
-            className={`p-3.5 rounded-2xl border text-xs font-medium flex items-start gap-2.5 ${
-              dbTestResult.success
-                ? 'bg-emerald-950/70 border-emerald-700/60 text-emerald-200'
-                : 'bg-rose-950/70 border-rose-700/60 text-rose-200'
-            }`}
-          >
-            {dbTestResult.success ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            ) : (
-              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-            )}
-            <div className="flex-1">
-              <div>{dbTestResult.message}</div>
-              {dbTestResult.latencyMs !== undefined && (
-                <div className="text-[11px] font-mono mt-1 text-slate-400">
-                  Latência da Conexão: {dbTestResult.latencyMs}ms
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Step 1: SQL Schema Script */}
-          <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 space-y-3 flex flex-col justify-between">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
+              <div>
                 <div className="flex items-center gap-2">
-                  <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black flex items-center justify-center text-xs">
-                    1
+                  <h2 className="text-base sm:text-lg font-black text-white">
+                    Banco de Dados Online (Supabase)
+                  </h2>
+                  <span
+                    className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
+                      isOnlineDb
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    }`}
+                  >
+                    {isOnlineDb ? '🟢 Conectado & Online' : '🟡 Modo Local (Offline)'}
                   </span>
-                  <h3 className="font-bold text-white text-xs sm:text-sm">
-                    Copiar Script SQL do Banco
-                  </h3>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    Exclusivo Superadmin
+                  </span>
                 </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Garante que qualquer celular, tablet ou computador acesse a mesma base de dados em tempo real.
+                </p>
+              </div>
+            </div>
+
+            {isOnlineDb && (
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleCopySql}
-                  className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs ${
-                    copiedSql
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-amber-500 hover:bg-amber-600 text-slate-950 active:scale-95'
-                  }`}
+                  onClick={reloadFromOnlineDb}
+                  disabled={dbSyncState === 'syncing'}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 flex items-center gap-1.5 transition-colors"
                 >
-                  {copiedSql ? (
-                    <>
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Script Copiado!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Copiar Script SQL</span>
-                    </>
-                  )}
+                  <RefreshCw className={`w-3.5 h-3.5 ${dbSyncState === 'syncing' ? 'animate-spin' : ''}`} />
+                  <span>Atualizar Nuvem</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDisconnectSupabase}
+                  className="px-3 py-1.5 bg-red-950/60 hover:bg-red-900/80 text-red-300 text-xs font-bold rounded-xl border border-red-800/60 transition-colors"
+                >
+                  Desconectar
                 </button>
               </div>
-              <p className="text-slate-400 text-xs leading-relaxed">
-                No painel do Supabase, acesse o menu <strong>SQL Editor</strong> &gt; <strong>New Query</strong> &gt; cole o script e clique em <strong>Run</strong>.
-              </p>
-            </div>
-
-            <div className="pt-2">
-              <a
-                href="https://supabase.com/dashboard"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-amber-400 hover:text-amber-300 font-bold text-xs flex items-center gap-1.5 underline"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>Abrir Dashboard do Supabase (SQL Editor)</span>
-              </a>
-            </div>
+            )}
           </div>
 
-          {/* Step 2: Supabase Connection Active Status */}
-          <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 space-y-3 flex flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="w-6 h-6 rounded-full bg-emerald-500 text-slate-950 font-black flex items-center justify-center text-xs">
-                  2
-                </span>
-                <h3 className="font-bold text-white text-xs sm:text-sm">
-                  Status da Conexão Supabase
-                </h3>
-              </div>
-
-              <div className="space-y-2 bg-slate-900/90 p-3 rounded-xl border border-slate-800 text-xs">
-                <div className="flex items-center justify-between text-slate-300">
-                  <span className="font-semibold text-slate-400">Ambiente Online:</span>
-                  <span className="font-bold text-emerald-400 flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    Supabase Cloud
-                  </span>
-                </div>
-                <div className="flex flex-col gap-0.5 text-slate-300">
-                  <span className="text-[11px] text-slate-400 font-semibold">URL Conectada:</span>
-                  <span className="font-mono text-[11px] text-amber-300 truncate bg-slate-950 px-2 py-1 rounded">
-                    {supabaseUrl}
-                  </span>
-                </div>
-                {lastSyncTime && (
-                  <div className="flex items-center justify-between text-slate-400 text-[11px] pt-1 border-t border-slate-800">
-                    <span>Última Sincronização:</span>
-                    <span className="text-slate-200">{lastSyncTime}</span>
+          {/* Database feedback banner */}
+          {dbTestResult && (
+            <div
+              className={`p-3.5 rounded-2xl border text-xs font-medium flex items-start gap-2.5 ${
+                dbTestResult.success
+                  ? 'bg-emerald-950/70 border-emerald-700/60 text-emerald-200'
+                  : 'bg-rose-950/70 border-rose-700/60 text-rose-200'
+              }`}
+            >
+              {dbTestResult.success ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              )}
+              <div className="flex-1">
+                <div>{dbTestResult.message}</div>
+                {dbTestResult.latencyMs !== undefined && (
+                  <div className="text-[11px] font-mono mt-1 text-slate-400">
+                    Latência da Conexão: {dbTestResult.latencyMs}ms
                   </div>
                 )}
               </div>
             </div>
+          )}
 
-            <div className="pt-2 flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={handleSeedDataToCloud}
-                disabled={seedingDb}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 transition-colors flex items-center gap-1.5"
-              >
-                <UploadCloud className="w-3.5 h-3.5 text-emerald-400" />
-                <span>{seedingDb ? 'Enviando...' : 'Exportar Base Atual'}</span>
-              </button>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Step 1: SQL Schema Script */}
+            <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 space-y-3 flex flex-col justify-between">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black flex items-center justify-center text-xs">
+                      1
+                    </span>
+                    <h3 className="font-bold text-white text-xs sm:text-sm">
+                      Copiar Script SQL do Banco
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCopySql}
+                    className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs ${
+                      copiedSql
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-amber-500 hover:bg-amber-600 text-slate-950 active:scale-95'
+                    }`}
+                  >
+                    {copiedSql ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Script Copiado!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copiar Script SQL</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <p className="text-slate-400 text-xs leading-relaxed">
+                  No painel do Supabase, acesse o menu <strong>SQL Editor</strong> &gt; <strong>New Query</strong> &gt; cole o script e clique em <strong>Run</strong>.
+                </p>
+              </div>
 
-              <button
-                type="button"
-                onClick={() => handleSaveAndConnectDb({ preventDefault: () => {} } as any)}
-                disabled={testingDb}
-                className="bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-md transition-all flex items-center gap-1.5 disabled:opacity-50"
-              >
-                {testingDb ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Testando...</span>
-                  </>
-                ) : (
-                  <>
-                    <Zap className="w-3.5 h-3.5" />
-                    <span>Testar Conexão</span>
-                  </>
-                )}
-              </button>
+              <div className="pt-2">
+                <a
+                  href="https://supabase.com/dashboard"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-amber-400 hover:text-amber-300 font-bold text-xs flex items-center gap-1.5 underline"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Abrir Dashboard do Supabase (SQL Editor)</span>
+                </a>
+              </div>
+            </div>
+
+            {/* Step 2: Supabase Connection Active Status */}
+            <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 space-y-3 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-6 h-6 rounded-full bg-emerald-500 text-slate-950 font-black flex items-center justify-center text-xs">
+                    2
+                  </span>
+                  <h3 className="font-bold text-white text-xs sm:text-sm">
+                    Status da Conexão Supabase
+                  </h3>
+                </div>
+
+                <div className="space-y-2 bg-slate-900/90 p-3 rounded-xl border border-slate-800 text-xs">
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span className="font-semibold text-slate-400">Ambiente Online:</span>
+                    <span className="font-bold text-emerald-400 flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      Supabase Cloud
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-0.5 text-slate-300">
+                    <span className="text-[11px] text-slate-400 font-semibold">URL Conectada:</span>
+                    <span className="font-mono text-[11px] text-amber-300 truncate bg-slate-950 px-2 py-1 rounded">
+                      {supabaseUrl}
+                    </span>
+                  </div>
+                  {lastSyncTime && (
+                    <div className="flex items-center justify-between text-slate-400 text-[11px] pt-1 border-t border-slate-800">
+                      <span>Última Sincronização:</span>
+                      <span className="text-slate-200">{lastSyncTime}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleSeedDataToCloud}
+                  disabled={seedingDb}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 transition-colors flex items-center gap-1.5"
+                >
+                  <UploadCloud className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{seedingDb ? 'Enviando...' : 'Exportar Base Atual'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSaveAndConnectDb({ preventDefault: () => {} } as any)}
+                  disabled={testingDb}
+                  className="bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-md transition-all flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {testingDb ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Testando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="w-3.5 h-3.5" />
+                      <span>Testar Conexão</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 rounded-2xl p-4 sm:p-5 text-white border border-slate-800 shadow-sm flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30 shrink-0">
+              <Database className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="font-bold text-sm text-white flex items-center gap-2">
+                <span>Banco de Dados Online Conectado (Supabase)</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Sincronização em tempo real ativa. Alterações estruturais de banco e scripts SQL são restritos ao Superadmin.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Left Column: Company & Receipt Settings (2 cols) */}
@@ -712,62 +738,66 @@ export const ConfigView: React.FC = () => {
                 <span>Exportar Backup Completo (.json)</span>
               </button>
 
-              <div>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept=".json"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
+              {isSuperadmin && (
+                <div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept=".json"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full py-2.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>Restaurar de Arquivo Backup</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Test Utilities Card (Exclusive to Superadmin) */}
+          {isSuperadmin && (
+            <div className="bg-white p-5 rounded-2xl border border-amber-200 shadow-xs space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <h2 className="text-sm font-black text-slate-900">
+                  Funções para Testes & Demonstração
+                </h2>
+              </div>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Use estas funções para simular fluxos completos de venda, rotas de entrega e cálculo de lucros, ou limpar para começar do zero.
+              </p>
+
+              <div className="space-y-2.5 pt-1">
+                {/* Gerar Dados Fictícios */}
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full py-2.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-colors flex items-center justify-center gap-2"
+                  onClick={() => setConfirmSampleOpen(true)}
+                  className="w-full py-2.5 px-3 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2"
                 >
-                  <Upload className="w-4 h-4" />
-                  <span>Restaurar de Arquivo Backup</span>
+                  <Sparkles className="w-4 h-4" />
+                  <span>Gerar Dados Fictícios de Teste</span>
+                </button>
+
+                {/* Zerar Dados */}
+                <button
+                  type="button"
+                  onClick={() => setConfirmClearOpen(true)}
+                  className="w-full py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl border border-red-200 transition-colors flex items-center justify-center gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Zerar Dados Operacionais</span>
                 </button>
               </div>
             </div>
-          </div>
-
-          {/* Test Utilities Card */}
-          <div className="bg-white p-5 rounded-2xl border border-amber-200 shadow-xs space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
-                <Sparkles className="w-4 h-4" />
-              </div>
-              <h2 className="text-sm font-black text-slate-900">
-                Funções para Testes & Demonstração
-              </h2>
-            </div>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Use estas funções para simular fluxos completos de venda, rotas de entrega e cálculo de lucros, ou limpar para começar do zero.
-            </p>
-
-            <div className="space-y-2.5 pt-1">
-              {/* Gerar Dados Fictícios */}
-              <button
-                type="button"
-                onClick={() => setConfirmSampleOpen(true)}
-                className="w-full py-2.5 px-3 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>Gerar Dados Fictícios de Teste</span>
-              </button>
-
-              {/* Zerar Dados */}
-              <button
-                type="button"
-                onClick={() => setConfirmClearOpen(true)}
-                className="w-full py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl border border-red-200 transition-colors flex items-center justify-center gap-2"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>Zerar Dados Operacionais</span>
-              </button>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 

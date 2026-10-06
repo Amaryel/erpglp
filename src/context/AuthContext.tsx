@@ -341,6 +341,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!cleanUsername) return { success: false, error: 'Informe o nome de usuário.' };
     if (!name.trim()) return { success: false, error: 'Informe o nome completo.' };
 
+    // Regra: Apenas Superadmin pode criar outro Superadmin
+    if (role === 'superadmin' && currentUser?.role !== 'superadmin') {
+      return {
+        success: false,
+        error: 'Apenas o Superadmin tem permissão para criar usuários com privilégios de Superadmin.',
+      };
+    }
+
     const exists = users.some((u) => u.username.toLowerCase() === cleanUsername);
     if (exists) {
       return { success: false, error: 'Este nome de usuário já está cadastrado no sistema.' };
@@ -386,6 +394,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const user = users.find((u) => u.id === id);
     if (!user) return { success: false, error: 'Usuário não encontrado.' };
 
+    // Regra de segurança: Apenas o próprio Superadmin pode alterar a conta ou permissões de um Superadmin
+    if (user.role === 'superadmin' && currentUser?.role !== 'superadmin') {
+      return {
+        success: false,
+        error: 'Acesso Negado: Apenas o Superadmin pode alterar os dados ou permissões do Superadmin.',
+      };
+    }
+
+    // Regra: Não-superadmins não podem promover usuários a superadmin
+    if (updates.role === 'superadmin' && currentUser?.role !== 'superadmin') {
+      return {
+        success: false,
+        error: 'Acesso Negado: Apenas o Superadmin pode conceder o cargo de Superadmin.',
+      };
+    }
+
     const updatedUser: AppUser = {
       ...user,
       ...updates,
@@ -418,11 +442,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const user = users.find((u) => u.id === id);
     if (!user) return { success: false, error: 'Usuário não encontrado.' };
 
+    // Regra: Apenas Superadmin pode bloquear ou desbloquear
+    if (currentUser?.role !== 'superadmin') {
+      return {
+        success: false,
+        error: 'Apenas o Superadmin possui autorização para bloquear ou desbloquear usuários.',
+      };
+    }
+
     // Proteção absoluta: O superadmin amaryel NUNCA pode ser bloqueado
     if (user.username.toLowerCase() === 'amaryel' || user.role === 'superadmin') {
       return {
         success: false,
-        error: 'O usuário superadmin (amaryel) possui proteção de segurança e não pode ser bloqueado.',
+        error: 'O usuário Superadmin possui proteção total de segurança e não pode ser bloqueado.',
       };
     }
 
@@ -435,6 +467,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     id: string,
     newPassword: string
   ): Promise<{ success: boolean; error?: string }> => {
+    const user = users.find((u) => u.id === id);
+    if (!user) return { success: false, error: 'Usuário não encontrado.' };
+
+    // Regra: Admin comum não pode redefinir a senha do Superadmin
+    if (user.role === 'superadmin' && currentUser?.role !== 'superadmin') {
+      return {
+        success: false,
+        error: 'Acesso Negado: Apenas o Superadmin pode redefinir a senha da conta Superadmin.',
+      };
+    }
+
     if (!newPassword || newPassword.length < 4) {
       return { success: false, error: 'A nova senha deve ter no mínimo 4 caracteres.' };
     }
@@ -451,9 +494,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const user = users.find((u) => u.id === id);
     if (!user) return { success: false, error: 'Usuário não encontrado.' };
 
+    // Regra: Apenas Superadmin pode excluir usuários
+    if (currentUser?.role !== 'superadmin') {
+      return {
+        success: false,
+        error: 'Apenas o Superadmin possui autorização para excluir usuários.',
+      };
+    }
+
     // Proteção: O superadmin não pode ser excluído
     if (user.username.toLowerCase() === 'amaryel' || user.role === 'superadmin') {
-      return { success: false, error: 'O usuário superadmin principal não pode ser excluído.' };
+      return { success: false, error: 'O usuário Superadmin principal não pode ser excluído.' };
     }
 
     const supabase = getSupabaseClient();

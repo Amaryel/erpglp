@@ -23,6 +23,7 @@ import {
   SUPABASE_SCHEMA_SQL,
 } from '../lib/supabase';
 import { useErp } from '../context/ErpContext';
+import { useAuth } from '../context/AuthContext';
 
 interface SupabaseModalProps {
   isOpen: boolean;
@@ -30,6 +31,9 @@ interface SupabaseModalProps {
 }
 
 export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose }) => {
+  const { currentUser } = useAuth();
+  const isSuperadmin = currentUser?.role === 'superadmin';
+
   const { isOnlineDb, dbSyncState, lastSyncTime, reloadFromOnlineDb, syncCurrentDataToSupabase } = useErp();
 
   const currentConfig = getStoredSupabaseConfig();
@@ -45,7 +49,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
     latencyMs?: number;
   } | null>(null);
 
-  if (!isOpen) return null;
+  if (!isOpen || !isSuperadmin) return null;
 
   const handleCopySql = () => {
     navigator.clipboard.writeText(SUPABASE_SCHEMA_SQL);

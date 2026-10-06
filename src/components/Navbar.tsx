@@ -189,21 +189,37 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Right Header Controls */}
           <div className="flex items-center gap-2 sm:gap-3">
             {/* Supabase Online DB Badge */}
-            <button
-              id="header-supabase-btn"
-              onClick={onOpenSupabase}
-              title="Banco de Dados Online Ativo (Supabase)"
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border bg-emerald-950/70 text-emerald-300 border-emerald-600/60 hover:bg-emerald-900/70 transition-all"
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <Database className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">
-                Banco Online
-              </span>
-              {dbSyncState === 'syncing' && (
-                <span className="text-[10px] text-emerald-200 animate-pulse">Sync...</span>
-              )}
-            </button>
+            {isSuperadmin ? (
+              <button
+                id="header-supabase-btn"
+                onClick={onOpenSupabase}
+                title="Gerenciar Banco de Dados Online (Superadmin)"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border bg-emerald-950/70 text-emerald-300 border-emerald-600/60 hover:bg-emerald-900/70 transition-all cursor-pointer"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <Database className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">
+                  Banco Online
+                </span>
+                {dbSyncState === 'syncing' && (
+                  <span className="text-[10px] text-emerald-200 animate-pulse">Sync...</span>
+                )}
+              </button>
+            ) : (
+              <div
+                title="Banco de Dados Online Conectado"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border bg-emerald-950/70 text-emerald-300 border-emerald-600/60 select-none"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <Database className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">
+                  Banco Online
+                </span>
+                {dbSyncState === 'syncing' && (
+                  <span className="text-[10px] text-emerald-200 animate-pulse">Sync...</span>
+                )}
+              </div>
+            )}
 
             {/* Caixa Status Indicator */}
             <button
