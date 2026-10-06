@@ -17,8 +17,14 @@ import {
   Layers,
   ChevronLeft,
   ChevronRight,
+  Database,
+  Cloud,
+  LogOut,
+  UserCheck,
+  Shield,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { useAuth } from '../context/AuthContext';
 import { formatCurrency } from '../utils/formatters';
 
 export type ActiveTab =
@@ -37,12 +43,14 @@ export type ActiveTab =
   | 'lucro'
   | 'relatorios'
   | 'auditoria'
+  | 'usuarios'
   | 'config';
 
 interface NavbarProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   onOpenNewSale: () => void;
+  onOpenSupabase: () => void;
   mobileMenuOpen: boolean;
   setMobileMenuOpen: (open: boolean) => void;
   sidebarCollapsed: boolean;
@@ -53,6 +61,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   setActiveTab,
   onOpenNewSale,
+  onOpenSupabase,
   mobileMenuOpen,
   setMobileMenuOpen,
   sidebarCollapsed,
@@ -63,7 +72,13 @@ export const Navbar: React.FC<NavbarProps> = ({
     overduePayablesCount,
     cashRegister,
     criticalStockCount,
+    isOnlineDb,
+    dbSyncState,
   } = useErp();
+
+  const { currentUser, logout } = useAuth();
+  const isSuperadmin = currentUser?.role === 'superadmin';
+  const isAdminOrSuper = currentUser?.role === 'superadmin' || currentUser?.role === 'admin';
 
   const navItems = [
     { id: 'dashboard' as ActiveTab, label: 'Dashboard', icon: LayoutDashboard },
@@ -106,6 +121,17 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'lucro' as ActiveTab, label: 'Lucro & Resultados', icon: TrendingUp },
     { id: 'relatorios' as ActiveTab, label: 'Relatórios Gerenciais', icon: FileText },
     { id: 'auditoria' as ActiveTab, label: 'Auditoria & Divergências', icon: ShieldAlert },
+    ...(isAdminOrSuper
+      ? [
+          {
+            id: 'usuarios' as ActiveTab,
+            label: 'Usuários & Acessos',
+            icon: Shield,
+            badge: isSuperadmin ? 'Superadmin' : undefined,
+            badgeColor: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
+          },
+        ]
+      : []),
     { id: 'config' as ActiveTab, label: 'Configurações & Backup', icon: Settings },
   ];
 
@@ -161,12 +187,37 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* Right Header Controls */}
-          <div className="flex items-center gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Supabase Online DB Badge */}
+            <button
+              id="header-supabase-btn"
+              onClick={onOpenSupabase}
+              title={isOnlineDb ? 'Banco de Dados Online Ativo (Supabase)' : 'Configurar Banco de Dados Online (Supabase)'}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+                isOnlineDb
+                  ? 'bg-emerald-950/70 text-emerald-300 border-emerald-600/60 hover:bg-emerald-900/70'
+                  : 'bg-amber-950/70 text-amber-300 border-amber-600/60 hover:bg-amber-900/70 animate-pulse'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  isOnlineDb ? 'bg-emerald-400' : 'bg-amber-400'
+                }`}
+              />
+              <Database className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">
+                {isOnlineDb ? 'Online' : 'Conectar Banco'}
+              </span>
+              {dbSyncState === 'syncing' && (
+                <span className="text-[10px] text-emerald-200">Sync...</span>
+              )}
+            </button>
+
             {/* Caixa Status Indicator */}
             <button
               id="header-cash-status-btn"
               onClick={() => handleSelectTab('caixa')}
-              className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+              className={`hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
                 cashRegister?.status === 'aberto'
                   ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/50 hover:bg-emerald-900/60'
                   : 'bg-rose-950/60 text-rose-300 border-rose-700/50 hover:bg-rose-900/60'
@@ -194,6 +245,33 @@ export const Navbar: React.FC<NavbarProps> = ({
               <PlusCircle className="w-4 h-4 sm:w-5 sm:h-5" />
               <span>Nova Venda</span>
             </button>
+
+            {/* Current User & Logout Button */}
+            {currentUser && (
+              <div className="flex items-center gap-1 pl-1 border-l border-slate-800">
+                <div
+                  onClick={() => isAdminOrSuper && handleSelectTab('usuarios')}
+                  className="hidden xl:flex flex-col text-right cursor-pointer hover:opacity-80 transition-opacity"
+                  title={currentUser.name}
+                >
+                  <span className="text-xs font-bold text-slate-200 leading-tight truncate max-w-[120px]">
+                    {currentUser.name.split(' ')[0]}
+                  </span>
+                  <span className="text-[10px] text-amber-400 uppercase font-semibold leading-none">
+                    {currentUser.role}
+                  </span>
+                </div>
+
+                <button
+                  onClick={logout}
+                  title="Sair do Sistema"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                  aria-label="Sair"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -207,20 +285,15 @@ export const Navbar: React.FC<NavbarProps> = ({
         aria-hidden="true"
       />
 
-      {/* SIDEBAR:
-          - Mobile / Tablet (< lg): Slide-over drawer with z-50
-          - Desktop (>= lg): Fixed left navigation dock with dynamic width (w-64 or w-20)
-      */}
+      {/* SIDEBAR */}
       <aside
         className={`fixed top-0 lg:top-14 left-0 bottom-0 bg-slate-900 border-r border-slate-800 text-slate-300 z-50 lg:z-30 flex flex-col justify-between transition-all duration-300 ease-in-out ${
-          /* Mobile/Tablet Drawer positioning */
           mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         } ${
-          /* Desktop width: collapsed vs expanded */
           sidebarCollapsed ? 'w-72 lg:w-20' : 'w-72 lg:w-64'
         }`}
       >
-        {/* Drawer Header (only on mobile/tablet) */}
+        {/* Drawer Header (mobile only) */}
         <div className="lg:hidden flex items-center justify-between px-4 py-3.5 border-b border-slate-800 bg-slate-950/50">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-white font-bold">
@@ -266,7 +339,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                       isActive ? 'text-amber-400' : 'text-slate-400'
                     }`}
                   />
-                  {/* Label (hidden on desktop if sidebar is collapsed) */}
                   <span className={`${sidebarCollapsed ? 'lg:hidden' : 'block'} truncate`}>
                     {item.label}
                   </span>
@@ -286,7 +358,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </span>
                 )}
 
-                {/* Dot indicator when collapsed and has badge */}
                 {sidebarCollapsed && item.badge && (
                   <span className="hidden lg:block absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-500" />
                 )}
@@ -295,23 +366,26 @@ export const Navbar: React.FC<NavbarProps> = ({
           })}
         </div>
 
-        {/* Sidebar Footer */}
+        {/* Sidebar Footer with current user info and logout */}
         <div className="p-3 border-t border-slate-800 bg-slate-950/40 text-xs text-slate-400 flex items-center justify-between">
           <div className={`${sidebarCollapsed ? 'lg:hidden' : 'block'} truncate`}>
-            <div className="font-semibold text-slate-200">ErpGLP Gestão</div>
-            <div className="text-[11px]">Modo Proprietário</div>
+            <div className="font-semibold text-slate-200 truncate">
+              {currentUser?.name || 'ErpGLP Gestão'}
+            </div>
+            <div className="text-[11px] text-amber-400 uppercase font-bold">
+              {currentUser?.role || 'Modo Operacional'}
+            </div>
           </div>
 
           <div className="flex items-center gap-1">
             <button
-              onClick={() => handleSelectTab('auditoria')}
-              className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-amber-400 transition-colors"
-              title="Auditoria & Divergências"
+              onClick={logout}
+              className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-red-400 transition-colors"
+              title="Sair do Sistema"
             >
-              <ShieldAlert className="w-4 h-4" />
+              <LogOut className="w-4 h-4" />
             </button>
 
-            {/* Desktop collapse toggle button at footer */}
             <button
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
               className="hidden lg:flex p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-amber-400 transition-colors"

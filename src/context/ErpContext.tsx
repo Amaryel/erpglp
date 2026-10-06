@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode, useCallback } from 'react';
 import {
   Product,
   StockItem,
@@ -9,7 +9,6 @@ import {
   Supplier,
   Sale,
   SaleItem,
-  SaleStatus,
   SaleType,
   PaymentSplit,
   PaymentMethod,
@@ -40,6 +39,44 @@ import {
   DEFAULT_SETTINGS,
 } from '../data/initialData';
 import { generateNextCode } from '../utils/formatters';
+import {
+  getSupabaseClient,
+  getStoredSupabaseConfig,
+  mapDbProduct,
+  mapProductToDb,
+  mapDbStock,
+  mapStockToDb,
+  mapDbClient,
+  mapClientToDb,
+  mapDbDeliveryPerson,
+  mapDeliveryPersonToDb,
+  mapDbSupplier,
+  mapSupplierToDb,
+  mapDbSale,
+  mapSaleToDb,
+  mapDbReceivable,
+  mapReceivableToDb,
+  mapDbCashRegister,
+  mapCashRegisterToDb,
+  mapDbCashMovement,
+  mapCashMovementToDb,
+  mapDbExpense,
+  mapExpenseToDb,
+  mapDbPayable,
+  mapPayableToDb,
+  mapDbStockMovement,
+  mapStockMovementToDb,
+  mapDbStockAdjustment,
+  mapStockAdjustmentToDb,
+  mapDbAuditLog,
+  mapAuditLogToDb,
+  mapDbStockConference,
+  mapStockConferenceToDb,
+  mapDbCashConference,
+  mapCashConferenceToDb,
+  mapDbAppSettings,
+  mapAppSettingsToDb,
+} from '../lib/supabase';
 
 interface ErpContextType {
   // State
@@ -59,6 +96,15 @@ interface ErpContextType {
   auditLogs: AuditLog[];
   stockConferences: StockConference[];
   cashConferences: CashConference[];
+  settings: AppSettings;
+
+  // Supabase Online DB status
+  isOnlineDb: boolean;
+  dbSyncState: 'idle' | 'syncing' | 'error';
+  lastSyncTime: string | null;
+  dbErrorMessage: string | null;
+  reloadFromOnlineDb: () => Promise<void>;
+  syncCurrentDataToSupabase: () => Promise<{ success: boolean; error?: string }>;
 
   // Sales
   createSale: (saleData: {
@@ -121,7 +167,6 @@ interface ErpContextType {
   performCashConference: (physicalCounted: number, notes?: string) => { difference: number };
 
   // Settings
-  settings: AppSettings;
   updateSettings: (newSettings: Partial<AppSettings>) => void;
 
   // Expenses & Payables
@@ -173,7 +218,7 @@ const STORAGE_KEY = 'erpglp_database_v1';
 const ErpContext = createContext<ErpContextType | null>(null);
 
 export function ErpProvider({ children }: { children: ReactNode }) {
-  // Load from localStorage or initialize with seed data
+  // Local state with localStorage fallback
   const [products, setProducts] = useState<Product[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_products`);
     return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
@@ -259,20 +304,16 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
   });
 
-  const updateSettings = (newSettings: Partial<AppSettings>) => {
-    setSettings((prev) => {
-      const updated = { ...prev, ...newSettings };
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_settings`, JSON.stringify(updated));
-      } catch (e) {
-        console.error('Error saving settings', e);
-      }
-      return updated;
-    });
-    addAuditLog('Configurações atualizadas', 'sistema', 'Parâmetros da empresa/revenda alterados.');
-  };
+  // Supabase Online DB Sync State
+  const [isOnlineDb, setIsOnlineDb] = useState<boolean>(() => {
+    const cfg = getStoredSupabaseConfig();
+    return cfg.isConfigured;
+  });
+  const [dbSyncState, setDbSyncState] = useState<'idle' | 'syncing' | 'error'>('idle');
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [dbErrorMessage, setDbErrorMessage] = useState<string | null>(null);
 
-  // Auto-persist to localStorage
+  // Helper to persist to localStorage for fast initial paint / offline fallback
   useEffect(() => {
     try {
       localStorage.setItem(`${STORAGE_KEY}_products`, JSON.stringify(products));
@@ -315,7 +356,260 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     settings,
   ]);
 
-  // Helper to log audit events
+  // Load all data from Supabase Online Database
+  const reloadFromOnlineDb = useCallback(async () => {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setIsOnlineDb(false);
+      return;
+    }
+
+    setDbSyncState('syncing');
+    setDbErrorMessage(null);
+
+    try {
+      // Execute parallel queries
+      const [
+        prodsRes,
+        stockRes,
+        clientsRes,
+        delivRes,
+        supRes,
+        salesRes,
+        recRes,
+        payRes,
+        cashRegRes,
+        cashMovesRes,
+        expensesRes,
+        auditRes,
+        stockMovesRes,
+        stockAdjRes,
+        stockConfRes,
+        cashConfRes,
+        settingsRes,
+      ] = await Promise.all([
+        supabase.from('products').select('*').order('created_at', { ascending: true }),
+        supabase.from('stock').select('*'),
+        supabase.from('clients').select('*').order('created_at', { ascending: false }),
+        supabase.from('delivery_persons').select('*').order('created_at', { ascending: true }),
+        supabase.from('suppliers').select('*').order('created_at', { ascending: true }),
+        supabase.from('sales').select('*').order('created_at', { ascending: false }),
+        supabase.from('receivables').select('*').order('created_at', { ascending: false }),
+        supabase.from('payables').select('*').order('created_at', { ascending: false }),
+        supabase.from('cash_registers').select('*').order('opened_at', { ascending: false }).limit(1),
+        supabase.from('cash_movements').select('*').order('timestamp', { ascending: false }),
+        supabase.from('expenses').select('*').order('date', { ascending: false }),
+        supabase.from('audit_logs').select('*').order('timestamp', { ascending: false }).limit(200),
+        supabase.from('stock_movements').select('*').order('timestamp', { ascending: false }).limit(300),
+        supabase.from('stock_adjustments').select('*').order('timestamp', { ascending: false }),
+        supabase.from('stock_conferences').select('*').order('timestamp', { ascending: false }),
+        supabase.from('cash_conferences').select('*').order('timestamp', { ascending: false }),
+        supabase.from('app_settings').select('*').eq('id', 'default').single(),
+      ]);
+
+      // If products table exists and returned data
+      if (prodsRes.data && prodsRes.data.length > 0) {
+        const loadedProds = prodsRes.data.map(mapDbProduct);
+        setProducts(loadedProds);
+      }
+
+      if (stockRes.data) {
+        const stockMap: Record<string, StockItem> = {};
+        stockRes.data.forEach((row) => {
+          const item = mapDbStock(row);
+          stockMap[item.productId] = item;
+        });
+        setStock(stockMap);
+      }
+
+      if (clientsRes.data) {
+        setClients(clientsRes.data.map(mapDbClient));
+      }
+
+      if (delivRes.data) {
+        setDeliveryPersons(delivRes.data.map(mapDbDeliveryPerson));
+      }
+
+      if (supRes.data) {
+        setSuppliers(supRes.data.map(mapDbSupplier));
+      }
+
+      if (salesRes.data) {
+        setSales(salesRes.data.map(mapDbSale));
+      }
+
+      if (recRes.data) {
+        setReceivables(recRes.data.map(mapDbReceivable));
+      }
+
+      if (payRes.data) {
+        setPayables(payRes.data.map(mapDbPayable));
+      }
+
+      if (cashRegRes.data && cashRegRes.data.length > 0) {
+        setCashRegister(mapDbCashRegister(cashRegRes.data[0]));
+      } else if (cashRegRes.data && cashRegRes.data.length === 0) {
+        setCashRegister(null);
+      }
+
+      if (cashMovesRes.data) {
+        setCashMovements(cashMovesRes.data.map(mapDbCashMovement));
+      }
+
+      if (expensesRes.data) {
+        setExpenses(expensesRes.data.map(mapDbExpense));
+      }
+
+      if (auditRes.data) {
+        setAuditLogs(auditRes.data.map(mapDbAuditLog));
+      }
+
+      if (stockMovesRes.data) {
+        setStockMovements(stockMovesRes.data.map(mapDbStockMovement));
+      }
+
+      if (stockAdjRes.data) {
+        setStockAdjustments(stockAdjRes.data.map(mapDbStockAdjustment));
+      }
+
+      if (stockConfRes.data) {
+        setStockConferences(stockConfRes.data.map(mapDbStockConference));
+      }
+
+      if (cashConfRes.data) {
+        setCashConferences(cashConfRes.data.map(mapDbCashConference));
+      }
+
+      if (settingsRes.data) {
+        setSettings(mapDbAppSettings(settingsRes.data));
+      }
+
+      setIsOnlineDb(true);
+      setDbSyncState('idle');
+      setLastSyncTime(new Date().toLocaleTimeString('pt-BR'));
+    } catch (err: any) {
+      console.error('Error fetching online database from Supabase:', err);
+      setDbSyncState('error');
+      setDbErrorMessage(err?.message || 'Falha ao sincronizar dados com o Supabase');
+    }
+  }, []);
+
+  // Push local data to Supabase (Seeding / Initial Cloud Upload)
+  const syncCurrentDataToSupabase = async (): Promise<{ success: boolean; error?: string }> => {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return { success: false, error: 'Supabase não configurado.' };
+    }
+
+    try {
+      setDbSyncState('syncing');
+
+      // 1. Settings
+      await supabase.from('app_settings').upsert(mapAppSettingsToDb(settings));
+
+      // 2. Products
+      if (products.length > 0) {
+        await supabase.from('products').upsert(products.map(mapProductToDb));
+      }
+
+      // 3. Stock
+      const stockItems = Object.values(stock);
+      if (stockItems.length > 0) {
+        await supabase.from('stock').upsert(stockItems.map(mapStockToDb));
+      }
+
+      // 4. Clients
+      if (clients.length > 0) {
+        await supabase.from('clients').upsert(clients.map(mapClientToDb));
+      }
+
+      // 5. Delivery Persons
+      if (deliveryPersons.length > 0) {
+        await supabase.from('delivery_persons').upsert(deliveryPersons.map(mapDeliveryPersonToDb));
+      }
+
+      // 6. Suppliers
+      if (suppliers.length > 0) {
+        await supabase.from('suppliers').upsert(suppliers.map(mapSupplierToDb));
+      }
+
+      // 7. Sales
+      if (sales.length > 0) {
+        await supabase.from('sales').upsert(sales.map(mapSaleToDb));
+      }
+
+      // 8. Receivables
+      if (receivables.length > 0) {
+        await supabase.from('receivables').upsert(receivables.map(mapReceivableToDb));
+      }
+
+      // 9. Payables
+      if (payables.length > 0) {
+        await supabase.from('payables').upsert(payables.map(mapPayableToDb));
+      }
+
+      // 10. Cash Register
+      if (cashRegister) {
+        await supabase.from('cash_registers').upsert(mapCashRegisterToDb(cashRegister));
+      }
+
+      // 11. Cash Movements
+      if (cashMovements.length > 0) {
+        await supabase.from('cash_movements').upsert(cashMovements.map(mapCashMovementToDb));
+      }
+
+      // 12. Expenses
+      if (expenses.length > 0) {
+        await supabase.from('expenses').upsert(expenses.map(mapExpenseToDb));
+      }
+
+      // 13. Audit Logs
+      if (auditLogs.length > 0) {
+        await supabase.from('audit_logs').upsert(auditLogs.map(mapAuditLogToDb));
+      }
+
+      // 14. Stock Movements
+      if (stockMovements.length > 0) {
+        await supabase.from('stock_movements').upsert(stockMovements.map(mapStockMovementToDb));
+      }
+
+      setDbSyncState('idle');
+      setLastSyncTime(new Date().toLocaleTimeString('pt-BR'));
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error seeding data to Supabase:', err);
+      setDbSyncState('error');
+      return { success: false, error: err?.message || 'Erro desconhecido' };
+    }
+  };
+
+  // Setup initial load and real-time listeners
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    // Initial fetch from cloud
+    reloadFromOnlineDb();
+
+    // Setup Realtime subscription across public tables
+    let debounceTimer: any = null;
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          reloadFromOnlineDb();
+        }, 300);
+      })
+      .subscribe();
+
+    return () => {
+      clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [reloadFromOnlineDb]);
+
+  // Helper to log audit events both locally and to Supabase
   const addAuditLog = (
     action: string,
     category: AuditLog['category'],
@@ -332,9 +626,27 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       productId: extra?.productId,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('audit_logs').insert(mapAuditLogToDb(newLog)).then();
+    }
   };
 
-  // 1. CREATE SALE
+  // 1. UPDATE SETTINGS
+  const updateSettings = (newSettings: Partial<AppSettings>) => {
+    const updated = { ...settings, ...newSettings };
+    setSettings(updated);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('app_settings').upsert(mapAppSettingsToDb(updated)).then();
+    }
+
+    addAuditLog('Configurações atualizadas', 'sistema', 'Parâmetros da empresa/revenda alterados.');
+  };
+
+  // 2. CREATE SALE (Balcão ou Delivery)
   const createSale = ({
     type,
     items: inputItems,
@@ -364,6 +676,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
     const client = clients.find((c) => c.id === clientId);
     const deliveryPerson = deliveryPersons.find((d) => d.id === deliveryPersonId);
+    const supabase = getSupabaseClient();
 
     // Build sale items with FROZEN unit cost at sale time
     const saleItems: SaleItem[] = [];
@@ -414,7 +727,8 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         };
       }
 
-      // Baixa estoque de cheios e adiciona vazios retornados
+      // 1. Atualizar estoque
+      const updatedStockItems: StockItem[] = [];
       setStock((prev) => {
         const nextStock = { ...prev };
         for (const item of saleItems) {
@@ -430,17 +744,23 @@ export function ErpProvider({ children }: { children: ReactNode }) {
             ? current.emptyQuantity + (returnedCylinders > 0 ? returnedCylinders : item.quantity)
             : current.emptyQuantity;
 
-          nextStock[item.productId] = {
+          const updatedItem = {
             ...current,
             fullQuantity: newFull,
             emptyQuantity: newEmpty,
             lastUpdated: timestamp,
           };
+          nextStock[item.productId] = updatedItem;
+          updatedStockItems.push(updatedItem);
         }
         return nextStock;
       });
 
-      // Movimentações de estoque
+      if (supabase && updatedStockItems.length > 0) {
+        supabase.from('stock').upsert(updatedStockItems.map(mapStockToDb)).then();
+      }
+
+      // 2. Movimentações de estoque
       const newMovements: StockMovement[] = [];
       for (const item of saleItems) {
         newMovements.push({
@@ -477,8 +797,11 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         }
       }
       setStockMovements((prev) => [...newMovements, ...prev]);
+      if (supabase && newMovements.length > 0) {
+        supabase.from('stock_movements').insert(newMovements.map(mapStockMovementToDb)).then();
+      }
 
-      // Registra pagamentos no Caixa (apenas os recebidos, fiado não entra no caixa!)
+      // 3. Pagamentos no Caixa
       if (cashRegister && cashRegister.status === 'aberto') {
         const validCashPayments = payments.filter((p) => p.method !== 'fiado' && p.amount > 0);
         if (validCashPayments.length > 0) {
@@ -494,13 +817,20 @@ export function ErpProvider({ children }: { children: ReactNode }) {
           }));
 
           setCashMovements((prev) => [...newCashMoves, ...prev]);
-          setCashRegister((prev) =>
-            prev ? { ...prev, currentBalance: prev.currentBalance + totalPaid } : null
-          );
+          const updatedCashRegister: CashRegister = {
+            ...cashRegister,
+            currentBalance: cashRegister.currentBalance + totalPaid,
+          };
+          setCashRegister(updatedCashRegister);
+
+          if (supabase) {
+            supabase.from('cash_movements').insert(newCashMoves.map(mapCashMovementToDb)).then();
+            supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedCashRegister)).then();
+          }
         }
       }
 
-      // Se houver fiado, registra em Contas a Receber
+      // 4. Se houver fiado, gera conta a receber
       if (fiadoPart > 0) {
         const newReceivable: AccountReceivable = {
           id: `rec-${Date.now()}`,
@@ -518,6 +848,9 @@ export function ErpProvider({ children }: { children: ReactNode }) {
           paymentHistory: [],
         };
         setReceivables((prev) => [newReceivable, ...prev]);
+        if (supabase) {
+          supabase.from('receivables').insert(mapReceivableToDb(newReceivable)).then();
+        }
       }
 
       const newSale: Sale = {
@@ -546,6 +879,10 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       };
 
       setSales((prev) => [newSale, ...prev]);
+      if (supabase) {
+        supabase.from('sales').insert(mapSaleToDb(newSale)).then();
+      }
+
       addAuditLog(
         `Venda Balcão #${nextSaleNumber} finalizada`,
         'venda',
@@ -556,10 +893,8 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       return { success: true, saleId };
     } else {
       // Venda Delivery:
-      // REGRA CRÍTICA:
-      // 1. NÃO entra no caixa!
-      // 2. Diminui botijões cheios do estoque (saíram para entrega).
-      // 3. Fica em "Vendas em Andamento" como 'pendente'.
+      // Diminui botijões cheios do estoque (saíram para entrega)
+      const updatedStockItems: StockItem[] = [];
       setStock((prev) => {
         const nextStock = { ...prev };
         for (const item of saleItems) {
@@ -570,14 +905,20 @@ export function ErpProvider({ children }: { children: ReactNode }) {
             lastUpdated: timestamp,
           };
           const newFull = Math.max(0, current.fullQuantity - item.quantity);
-          nextStock[item.productId] = {
+          const updatedItem = {
             ...current,
             fullQuantity: newFull,
             lastUpdated: timestamp,
           };
+          nextStock[item.productId] = updatedItem;
+          updatedStockItems.push(updatedItem);
         }
         return nextStock;
       });
+
+      if (supabase && updatedStockItems.length > 0) {
+        supabase.from('stock').upsert(updatedStockItems.map(mapStockToDb)).then();
+      }
 
       // Movimentação de saída dos cheios
       const newMovements: StockMovement[] = saleItems.map((item) => ({
@@ -595,6 +936,9 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         newQty: Math.max(0, (stock[item.productId]?.fullQuantity || 0) - item.quantity),
       }));
       setStockMovements((prev) => [...newMovements, ...prev]);
+      if (supabase && newMovements.length > 0) {
+        supabase.from('stock_movements').insert(newMovements.map(mapStockMovementToDb)).then();
+      }
 
       const newSale: Sale = {
         id: saleId,
@@ -623,6 +967,10 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       };
 
       setSales((prev) => [newSale, ...prev]);
+      if (supabase) {
+        supabase.from('sales').insert(mapSaleToDb(newSale)).then();
+      }
+
       addAuditLog(
         `Venda Delivery #${nextSaleNumber} criada`,
         'venda',
@@ -634,7 +982,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // 2. UPDATE DELIVERY STATUS (em_entrega / aguardando_finalizacao)
+  // 3. UPDATE DELIVERY STATUS
   const updateDeliveryStatus = (saleId: string, newStatus: 'em_entrega' | 'aguardando_finalizacao') => {
     const sale = sales.find((s) => s.id === saleId);
     if (!sale) return;
@@ -642,6 +990,11 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     setSales((prev) =>
       prev.map((s) => (s.id === saleId ? { ...s, status: newStatus } : s))
     );
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('sales').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', saleId).then();
+    }
 
     const statusLabel = newStatus === 'em_entrega' ? 'Saiu para entrega' : 'Aguardando finalização';
     addAuditLog(
@@ -652,7 +1005,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     );
   };
 
-  // 3. FINALIZE DELIVERY
+  // 4. FINALIZE DELIVERY
   const finalizeDelivery = (
     saleId: string,
     {
@@ -678,7 +1031,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const totalPaid = payments.filter((p) => p.method !== 'fiado').reduce((sum, p) => sum + p.amount, 0);
     const fiadoPart = payments.find((p) => p.method === 'fiado')?.amount || 0;
 
-    // Regra: Se houver fiado, é obrigatório ter cliente vinculado
+    // Se houver fiado, é obrigatório cliente vinculado
     const targetClientId = clientId || sale.clientId;
     const linkedClient = targetClientId ? clients.find((c) => c.id === targetClientId) : undefined;
     if (fiadoPart > 0 && !targetClientId) {
@@ -688,7 +1041,6 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    // Regra: Total pago + valor fiado deve ser igual ao total da venda
     if (Math.abs(totalPaid + fiadoPart - sale.totalAmount) > 0.05) {
       return {
         success: false,
@@ -697,12 +1049,13 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     }
 
     const timestamp = new Date().toISOString();
+    const supabase = getSupabaseClient();
 
-    // 1. Atualiza estoque com os vasilhames vazios retornados
+    // 1. Atualiza estoque com os vasilhames retornados
     if (returnedCylinders > 0) {
-      // Find the main cylinder product in this sale
       const cylinderItem = sale.items.find((i) => i.isCylinder) || sale.items[0];
       if (cylinderItem) {
+        let updatedItem: StockItem | null = null;
         setStock((prev) => {
           const current = prev[cylinderItem.productId] || {
             productId: cylinderItem.productId,
@@ -710,33 +1063,40 @@ export function ErpProvider({ children }: { children: ReactNode }) {
             emptyQuantity: 0,
             lastUpdated: timestamp,
           };
+          updatedItem = {
+            ...current,
+            emptyQuantity: current.emptyQuantity + returnedCylinders,
+            lastUpdated: timestamp,
+          };
           return {
             ...prev,
-            [cylinderItem.productId]: {
-              ...current,
-              emptyQuantity: current.emptyQuantity + returnedCylinders,
-              lastUpdated: timestamp,
-            },
+            [cylinderItem.productId]: updatedItem,
           };
         });
 
-        setStockMovements((prev) => [
-          {
-            id: `sm-${Date.now()}-return`,
-            timestamp,
-            productId: cylinderItem.productId,
-            productName: cylinderItem.productName,
-            quantity: returnedCylinders,
-            stockType: 'vazio',
-            direction: 'entrada',
-            type: 'retorno_vasilhame',
-            origin: `Retorno Delivery #${sale.saleNumber}`,
-            relatedSaleId: saleId,
-            previousQty: stock[cylinderItem.productId]?.emptyQuantity || 0,
-            newQty: (stock[cylinderItem.productId]?.emptyQuantity || 0) + returnedCylinders,
-          },
-          ...prev,
-        ]);
+        if (supabase && updatedItem) {
+          supabase.from('stock').upsert(mapStockToDb(updatedItem)).then();
+        }
+
+        const returnMovement: StockMovement = {
+          id: `sm-${Date.now()}-return`,
+          timestamp,
+          productId: cylinderItem.productId,
+          productName: cylinderItem.productName,
+          quantity: returnedCylinders,
+          stockType: 'vazio',
+          direction: 'entrada',
+          type: 'retorno_vasilhame',
+          origin: `Retorno Delivery #${sale.saleNumber}`,
+          relatedSaleId: saleId,
+          previousQty: stock[cylinderItem.productId]?.emptyQuantity || 0,
+          newQty: (stock[cylinderItem.productId]?.emptyQuantity || 0) + returnedCylinders,
+        };
+
+        setStockMovements((prev) => [returnMovement, ...prev]);
+        if (supabase) {
+          supabase.from('stock_movements').insert(mapStockMovementToDb(returnMovement)).then();
+        }
       }
     }
 
@@ -757,13 +1117,20 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         }));
 
         setCashMovements((prev) => [...newCashMoves, ...prev]);
-        setCashRegister((prev) =>
-          prev ? { ...prev, currentBalance: prev.currentBalance + totalPaid } : null
-        );
+        const updatedCashRegister: CashRegister = {
+          ...cashRegister,
+          currentBalance: cashRegister.currentBalance + totalPaid,
+        };
+        setCashRegister(updatedCashRegister);
+
+        if (supabase) {
+          supabase.from('cash_movements').insert(newCashMoves.map(mapCashMovementToDb)).then();
+          supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedCashRegister)).then();
+        }
       }
     }
 
-    // 3. Se houver valor fiado, vai para Contas a Receber
+    // 3. Se houver valor fiado, gera conta a receber
     if (fiadoPart > 0) {
       const newReceivable: AccountReceivable = {
         id: `rec-${Date.now()}`,
@@ -781,30 +1148,32 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         paymentHistory: [],
       };
       setReceivables((prev) => [newReceivable, ...prev]);
+      if (supabase) {
+        supabase.from('receivables').insert(mapReceivableToDb(newReceivable)).then();
+      }
     }
 
     // 4. Marca venda como finalizada
-    setSales((prev) =>
-      prev.map((s) =>
-        s.id === saleId
-          ? {
-              ...s,
-              status: 'finalizada',
-              finalizedAt: timestamp,
-              clientId: targetClientId || s.clientId,
-              clientName: linkedClient ? linkedClient.name : s.clientName,
-              clientPhone: linkedClient?.phone || s.clientPhone,
-              clientAddress: linkedClient?.address || s.clientAddress,
-              clientNeighborhood: linkedClient?.neighborhood || s.clientNeighborhood,
-              returnedCylinders,
-              payments,
-              paidAmount: totalPaid,
-              fiadoAmount: fiadoPart,
-              notes: notes ? (s.notes ? `${s.notes} | ${notes}` : notes) : s.notes,
-            }
-          : s
-      )
-    );
+    const updatedSale: Sale = {
+      ...sale,
+      status: 'finalizada',
+      finalizedAt: timestamp,
+      clientId: targetClientId || sale.clientId,
+      clientName: linkedClient ? linkedClient.name : sale.clientName,
+      clientPhone: linkedClient?.phone || sale.clientPhone,
+      clientAddress: linkedClient?.address || sale.clientAddress,
+      clientNeighborhood: linkedClient?.neighborhood || sale.clientNeighborhood,
+      returnedCylinders,
+      payments,
+      paidAmount: totalPaid,
+      fiadoAmount: fiadoPart,
+      notes: notes ? (sale.notes ? `${sale.notes} | ${notes}` : notes) : sale.notes,
+    };
+
+    setSales((prev) => prev.map((s) => (s.id === saleId ? updatedSale : s)));
+    if (supabase) {
+      supabase.from('sales').upsert(mapSaleToDb(updatedSale)).then();
+    }
 
     addAuditLog(
       `Venda Delivery #${sale.saleNumber} finalizada`,
@@ -816,22 +1185,23 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     return { success: true };
   };
 
-  // 4. CANCEL SALE
+  // 5. CANCEL SALE
   const cancelSale = (saleId: string, reason: string) => {
     const sale = sales.find((s) => s.id === saleId);
     if (!sale) return { success: false, error: 'Venda não encontrada.' };
     if (sale.status === 'cancelada') return { success: false, error: 'Venda já cancelada.' };
 
     const timestamp = new Date().toISOString();
+    const supabase = getSupabaseClient();
 
     // Reverter estoque
+    const updatedStockItems: StockItem[] = [];
     setStock((prev) => {
       const nextStock = { ...prev };
       for (const item of sale.items) {
         const current = nextStock[item.productId];
         if (!current) continue;
 
-        // Se era delivery e estava pendente/em entrega, devolve os cheios que saíram
         let newFull = current.fullQuantity;
         let newEmpty = current.emptyQuantity;
 
@@ -839,20 +1209,25 @@ export function ErpProvider({ children }: { children: ReactNode }) {
           newFull += item.quantity;
         }
 
-        // Se já havia finalizado e recebido vasilhames, deduz os vazios devolvidos
         if (sale.status === 'finalizada' && item.isCylinder && sale.returnedCylinders > 0) {
           newEmpty = Math.max(0, newEmpty - sale.returnedCylinders);
         }
 
-        nextStock[item.productId] = {
+        const updated = {
           ...current,
           fullQuantity: newFull,
           emptyQuantity: newEmpty,
           lastUpdated: timestamp,
         };
+        nextStock[item.productId] = updated;
+        updatedStockItems.push(updated);
       }
       return nextStock;
     });
+
+    if (supabase && updatedStockItems.length > 0) {
+      supabase.from('stock').upsert(updatedStockItems.map(mapStockToDb)).then();
+    }
 
     // Se a venda já estava finalizada, estorna pagamentos do caixa
     if (sale.status === 'finalizada' && sale.paidAmount > 0 && cashRegister) {
@@ -867,9 +1242,16 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         relatedSaleId: saleId,
       };
       setCashMovements((prev) => [reverseMove, ...prev]);
-      setCashRegister((prev) =>
-        prev ? { ...prev, currentBalance: prev.currentBalance - sale.paidAmount } : null
-      );
+      const updatedRegister: CashRegister = {
+        ...cashRegister,
+        currentBalance: cashRegister.currentBalance - sale.paidAmount,
+      };
+      setCashRegister(updatedRegister);
+
+      if (supabase) {
+        supabase.from('cash_movements').insert(mapCashMovementToDb(reverseMove)).then();
+        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+      }
     }
 
     // Se gerou conta a receber fiada, cancela a conta
@@ -877,11 +1259,17 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       setReceivables((prev) =>
         prev.map((r) => (r.saleId === saleId ? { ...r, status: 'pago', remainingAmount: 0 } : r))
       );
+      if (supabase) {
+        supabase.from('receivables').update({ status: 'pago', remainingAmount: 0, updated_at: timestamp }).eq('sale_id', saleId).then();
+      }
     }
 
     setSales((prev) =>
       prev.map((s) => (s.id === saleId ? { ...s, status: 'cancelada', cancellationReason: reason } : s))
     );
+    if (supabase) {
+      supabase.from('sales').update({ status: 'cancelada', cancellation_reason: reason, updated_at: timestamp }).eq('id', saleId).then();
+    }
 
     addAuditLog(
       `Venda #${sale.saleNumber} cancelada`,
@@ -893,7 +1281,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     return { success: true };
   };
 
-  // 5. ADJUST STOCK (Ajuste Manual Permanente)
+  // 6. ADJUST STOCK
   const adjustStock = ({
     productId,
     newFull,
@@ -918,6 +1306,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const diffFull = newFull - currentStock.fullQuantity;
     const diffEmpty = newEmpty - currentStock.emptyQuantity;
     const timestamp = new Date().toISOString();
+    const supabase = getSupabaseClient();
 
     const adjustment: StockAdjustment = {
       id: `adj-${Date.now()}`,
@@ -936,17 +1325,23 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
     setStockAdjustments((prev) => [adjustment, ...prev]);
 
+    const updatedStockItem: StockItem = {
+      productId,
+      fullQuantity: newFull,
+      emptyQuantity: newEmpty,
+      lastUpdated: timestamp,
+    };
+
     setStock((prev) => ({
       ...prev,
-      [productId]: {
-        productId,
-        fullQuantity: newFull,
-        emptyQuantity: newEmpty,
-        lastUpdated: timestamp,
-      },
+      [productId]: updatedStockItem,
     }));
 
-    // Stock Movement logs
+    if (supabase) {
+      supabase.from('stock').upsert(mapStockToDb(updatedStockItem)).then();
+      supabase.from('stock_adjustments').insert(mapStockAdjustmentToDb(adjustment)).then();
+    }
+
     const movements: StockMovement[] = [];
     if (diffFull !== 0) {
       movements.push({
@@ -982,7 +1377,12 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    setStockMovements((prev) => [...movements, ...prev]);
+    if (movements.length > 0) {
+      setStockMovements((prev) => [...movements, ...prev]);
+      if (supabase) {
+        supabase.from('stock_movements').insert(movements.map(mapStockMovementToDb)).then();
+      }
+    }
 
     addAuditLog(
       `Estoque ajustado: ${prod?.name}`,
@@ -992,7 +1392,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     );
   };
 
-  // 6. STOCK CONFERENCE
+  // 7. STOCK CONFERENCE
   const performStockConference = ({
     productId,
     physicalFull,
@@ -1017,6 +1417,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const diffFull = physicalFull - current.fullQuantity;
     const diffEmpty = physicalEmpty - current.emptyQuantity;
     const timestamp = new Date().toISOString();
+    const supabase = getSupabaseClient();
 
     const conf: StockConference = {
       id: `conf-${Date.now()}`,
@@ -1034,6 +1435,9 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     };
 
     setStockConferences((prev) => [conf, ...prev]);
+    if (supabase) {
+      supabase.from('stock_conferences').insert(mapStockConferenceToDb(conf)).then();
+    }
 
     if (applyAdjustment) {
       adjustStock({
@@ -1051,7 +1455,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // 7. RECEIVABLES (FIADO)
+  // 8. RECEIVABLES PAYMENT (FIADO)
   const registerReceivablePayment = ({
     receivableId,
     amount,
@@ -1074,29 +1478,29 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const newPaidAmount = rec.paidAmount + amount;
     const newRemaining = Math.max(0, rec.totalAmount - newPaidAmount);
     const newStatus = newRemaining <= 0.01 ? 'pago' : 'parcial';
+    const supabase = getSupabaseClient();
 
-    setReceivables((prev) =>
-      prev.map((r) =>
-        r.id === receivableId
-          ? {
-              ...r,
-              paidAmount: newPaidAmount,
-              remainingAmount: newRemaining,
-              status: newStatus,
-              paymentHistory: [
-                ...r.paymentHistory,
-                {
-                  id: `recpay-${Date.now()}`,
-                  timestamp,
-                  amount,
-                  method,
-                  notes,
-                },
-              ],
-            }
-          : r
-      )
-    );
+    const updatedReceivable: AccountReceivable = {
+      ...rec,
+      paidAmount: newPaidAmount,
+      remainingAmount: newRemaining,
+      status: newStatus,
+      paymentHistory: [
+        ...rec.paymentHistory,
+        {
+          id: `recpay-${Date.now()}`,
+          timestamp,
+          amount,
+          method,
+          notes,
+        },
+      ],
+    };
+
+    setReceivables((prev) => prev.map((r) => (r.id === receivableId ? updatedReceivable : r)));
+    if (supabase) {
+      supabase.from('receivables').upsert(mapReceivableToDb(updatedReceivable)).then();
+    }
 
     // Entra no Caixa ativo!
     if (cashRegister && cashRegister.status === 'aberto') {
@@ -1111,9 +1515,16 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         relatedReceivableId: receivableId,
       };
       setCashMovements((prev) => [cashMove, ...prev]);
-      setCashRegister((prev) =>
-        prev ? { ...prev, currentBalance: prev.currentBalance + amount } : null
-      );
+      const updatedRegister: CashRegister = {
+        ...cashRegister,
+        currentBalance: cashRegister.currentBalance + amount,
+      };
+      setCashRegister(updatedRegister);
+
+      if (supabase) {
+        supabase.from('cash_movements').insert(mapCashMovementToDb(cashMove)).then();
+        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+      }
     }
 
     addAuditLog(
@@ -1125,7 +1536,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     return { success: true };
   };
 
-  // 8. CASH REGISTER (CAIXA)
+  // 9. CASH REGISTER
   const openCashRegister = (initialBalance: number) => {
     const timestamp = new Date().toISOString();
     const newRegister: CashRegister = {
@@ -1136,6 +1547,11 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       status: 'aberto',
     };
     setCashRegister(newRegister);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('cash_registers').insert(mapCashRegisterToDb(newRegister)).then();
+    }
 
     addAuditLog(
       'Caixa aberto',
@@ -1159,6 +1575,11 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       closeNotes: notes,
     };
     setCashRegister(updated);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('cash_registers').upsert(mapCashRegisterToDb(updated)).then();
+    }
 
     addAuditLog(
       'Caixa fechado',
@@ -1184,6 +1605,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const timestamp = new Date().toISOString();
     const isOut = type === 'saida' || type === 'sangria';
     const moveAmount = Number(amount) || 0;
+    const supabase = getSupabaseClient();
 
     const move: CashMovement = {
       id: `cm-${Date.now()}-${type}`,
@@ -1196,16 +1618,18 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     };
 
     setCashMovements((prev) => [move, ...prev]);
-    setCashRegister((prev) =>
-      prev
-        ? {
-            ...prev,
-            currentBalance: isOut
-              ? prev.currentBalance - moveAmount
-              : prev.currentBalance + moveAmount,
-          }
-        : null
-    );
+    const updatedRegister: CashRegister = {
+      ...cashRegister,
+      currentBalance: isOut
+        ? cashRegister.currentBalance - moveAmount
+        : cashRegister.currentBalance + moveAmount,
+    };
+    setCashRegister(updatedRegister);
+
+    if (supabase) {
+      supabase.from('cash_movements').insert(mapCashMovementToDb(move)).then();
+      supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+    }
 
     addAuditLog(
       `Movimento manual de caixa: ${type.toUpperCase()}`,
@@ -1218,6 +1642,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const expected = cashRegister?.currentBalance || 0;
     const difference = physicalCounted - expected;
     const timestamp = new Date().toISOString();
+    const supabase = getSupabaseClient();
 
     const conf: CashConference = {
       id: `cconf-${Date.now()}`,
@@ -1229,6 +1654,10 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     };
     setCashConferences((prev) => [conf, ...prev]);
 
+    if (supabase) {
+      supabase.from('cash_conferences').insert(mapCashConferenceToDb(conf)).then();
+    }
+
     addAuditLog(
       'Conferência de caixa realizada',
       'caixa',
@@ -1238,7 +1667,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     return { difference };
   };
 
-  // 9. EXPENSES & ACCOUNTS PAYABLE
+  // 10. EXPENSES & PAYABLES
   const addExpense = (expenseData: Omit<Expense, 'id' | 'date'>) => {
     const timestamp = new Date().toISOString();
     const newExp: Expense = {
@@ -1247,6 +1676,11 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       date: timestamp,
     };
     setExpenses((prev) => [newExp, ...prev]);
+    const supabase = getSupabaseClient();
+
+    if (supabase) {
+      supabase.from('expenses').insert(mapExpenseToDb(newExp)).then();
+    }
 
     if (expenseData.paidFromCash && cashRegister && cashRegister.status === 'aberto') {
       const cashMove: CashMovement = {
@@ -1260,9 +1694,16 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         relatedExpenseId: newExp.id,
       };
       setCashMovements((prev) => [cashMove, ...prev]);
-      setCashRegister((prev) =>
-        prev ? { ...prev, currentBalance: prev.currentBalance - expenseData.amount } : null
-      );
+      const updatedRegister: CashRegister = {
+        ...cashRegister,
+        currentBalance: cashRegister.currentBalance - expenseData.amount,
+      };
+      setCashRegister(updatedRegister);
+
+      if (supabase) {
+        supabase.from('cash_movements').insert(mapCashMovementToDb(cashMove)).then();
+        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+      }
     }
 
     addAuditLog(
@@ -1281,47 +1722,24 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const newAmount = updates.amount !== undefined ? updates.amount : existing.amount;
     const newCashImpact = newPaidFromCash ? newAmount : 0;
     const cashDiff = newCashImpact - oldCashImpact;
+    const supabase = getSupabaseClient();
 
     if (cashDiff !== 0 && cashRegister && cashRegister.status === 'aberto') {
-      setCashRegister((prev) =>
-        prev ? { ...prev, currentBalance: prev.currentBalance - cashDiff } : null
-      );
-      setCashMovements((prev) => {
-        const found = prev.find((cm) => cm.relatedExpenseId === id);
-        if (found) {
-          if (newPaidFromCash) {
-            return prev.map((cm) =>
-              cm.relatedExpenseId === id
-                ? {
-                    ...cm,
-                    amount: newAmount,
-                    description: `Despesa: ${updates.description || existing.description} (${updates.category || existing.category})`,
-                  }
-                : cm
-            );
-          } else {
-            return prev.filter((cm) => cm.relatedExpenseId !== id);
-          }
-        } else if (newPaidFromCash) {
-          const newMove: CashMovement = {
-            id: `cm-${Date.now()}-exp-upd`,
-            cashRegisterId: cashRegister.id,
-            timestamp: new Date().toISOString(),
-            type: 'saida',
-            amount: newAmount,
-            method: updates.method || existing.method,
-            description: `Despesa: ${updates.description || existing.description}`,
-            relatedExpenseId: id,
-          };
-          return [newMove, ...prev];
-        }
-        return prev;
-      });
+      const updatedRegister: CashRegister = {
+        ...cashRegister,
+        currentBalance: cashRegister.currentBalance - cashDiff,
+      };
+      setCashRegister(updatedRegister);
+      if (supabase) {
+        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+      }
     }
 
-    setExpenses((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, ...updates } : e))
-    );
+    const updatedExpense: Expense = { ...existing, ...updates };
+    setExpenses((prev) => prev.map((e) => (e.id === id ? updatedExpense : e)));
+    if (supabase) {
+      supabase.from('expenses').upsert(mapExpenseToDb(updatedExpense)).then();
+    }
 
     addAuditLog(
       `Despesa alterada: ${updates.description || existing.description}`,
@@ -1333,15 +1751,27 @@ export function ErpProvider({ children }: { children: ReactNode }) {
   const deleteExpense = (id: string) => {
     const existing = expenses.find((e) => e.id === id);
     if (!existing) return;
+    const supabase = getSupabaseClient();
 
     if (existing.paidFromCash && cashRegister && cashRegister.status === 'aberto') {
-      setCashRegister((prev) =>
-        prev ? { ...prev, currentBalance: prev.currentBalance + existing.amount } : null
-      );
+      const updatedRegister: CashRegister = {
+        ...cashRegister,
+        currentBalance: cashRegister.currentBalance + existing.amount,
+      };
+      setCashRegister(updatedRegister);
       setCashMovements((prev) => prev.filter((cm) => cm.relatedExpenseId !== id));
+
+      if (supabase) {
+        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+        supabase.from('cash_movements').delete().eq('related_expense_id', id).then();
+      }
     }
 
     setExpenses((prev) => prev.filter((e) => e.id !== id));
+    if (supabase) {
+      supabase.from('expenses').delete().eq('id', id).then();
+    }
+
     addAuditLog(
       `Despesa excluída: ${existing.description}`,
       'financeiro',
@@ -1357,6 +1787,11 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     };
     setPayables((prev) => [newPayable, ...prev]);
 
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('payables').insert(mapPayableToDb(newPayable)).then();
+    }
+
     addAuditLog(
       `Conta a pagar cadastrada: ${payableData.description}`,
       'financeiro',
@@ -1369,18 +1804,19 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     if (!pay) return;
 
     const timestamp = new Date().toISOString();
-    setPayables((prev) =>
-      prev.map((p) =>
-        p.id === payableId
-          ? {
-              ...p,
-              status: 'pago',
-              paidAt: timestamp,
-              paymentMethod,
-            }
-          : p
-      )
-    );
+    const supabase = getSupabaseClient();
+
+    const updatedPayable: AccountPayable = {
+      ...pay,
+      status: 'pago',
+      paidAt: timestamp,
+      paymentMethod,
+    };
+
+    setPayables((prev) => prev.map((p) => (p.id === payableId ? updatedPayable : p)));
+    if (supabase) {
+      supabase.from('payables').upsert(mapPayableToDb(updatedPayable)).then();
+    }
 
     // Also register as expense
     const newExp: Expense = {
@@ -1394,6 +1830,9 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       notes: pay.supplierName || pay.supplier ? `Fornecedor: ${pay.supplierName || pay.supplier}` : undefined,
     };
     setExpenses((prev) => [newExp, ...prev]);
+    if (supabase) {
+      supabase.from('expenses').insert(mapExpenseToDb(newExp)).then();
+    }
 
     if (paidFromCash && cashRegister && cashRegister.status === 'aberto') {
       const cashMove: CashMovement = {
@@ -1406,9 +1845,16 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         description: `Pgto Conta: ${pay.description}`,
       };
       setCashMovements((prev) => [cashMove, ...prev]);
-      setCashRegister((prev) =>
-        prev ? { ...prev, currentBalance: prev.currentBalance - pay.amount } : null
-      );
+      const updatedRegister: CashRegister = {
+        ...cashRegister,
+        currentBalance: cashRegister.currentBalance - pay.amount,
+      };
+      setCashRegister(updatedRegister);
+
+      if (supabase) {
+        supabase.from('cash_movements').insert(mapCashMovementToDb(cashMove)).then();
+        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+      }
     }
 
     addAuditLog(
@@ -1431,6 +1877,12 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const pay = payables.find((p) => p.id === payableId);
     if (!pay) return;
     setPayables((prev) => prev.filter((p) => p.id !== payableId));
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('payables').delete().eq('id', payableId).then();
+    }
+
     addAuditLog(
       `Conta a pagar excluída: ${pay.description}`,
       'financeiro',
@@ -1438,7 +1890,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     );
   };
 
-  // 10. PRODUCTS & ENTITIES
+  // 11. PRODUCTS & ENTITIES
   const addProduct = (productData: Omit<Product, 'id' | 'code'>) => {
     const nextCode = generateNextCode('GLP', products.map((p) => p.code));
     const newProd: Product = {
@@ -1448,16 +1900,23 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     };
     setProducts((prev) => [...prev, newProd]);
 
-    // Initial stock item for this product
+    const initialStockItem: StockItem = {
+      productId: newProd.id,
+      fullQuantity: 0,
+      emptyQuantity: 0,
+      lastUpdated: new Date().toISOString(),
+    };
+
     setStock((prev) => ({
       ...prev,
-      [newProd.id]: {
-        productId: newProd.id,
-        fullQuantity: 0,
-        emptyQuantity: 0,
-        lastUpdated: new Date().toISOString(),
-      },
+      [newProd.id]: initialStockItem,
     }));
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('products').insert(mapProductToDb(newProd)).then();
+      supabase.from('stock').insert(mapStockToDb(initialStockItem)).then();
+    }
 
     addAuditLog(
       `Produto cadastrado: ${newProd.name}`,
@@ -1467,9 +1926,17 @@ export function ErpProvider({ children }: { children: ReactNode }) {
   };
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
-    setProducts((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
-    );
+    const existing = products.find((p) => p.id === id);
+    if (!existing) return;
+
+    const updated: Product = { ...existing, ...updates };
+    setProducts((prev) => prev.map((p) => (p.id === id ? updated : p)));
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('products').upsert(mapProductToDb(updated)).then();
+    }
+
     addAuditLog(
       'Produto alterado',
       'estoque',
@@ -1485,12 +1952,16 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const hasStockMovements = stockMovements.some((m) => m.productId === productId);
     const hasStockAdjustments = stockAdjustments.some((a) => a.productId === productId);
     const hasConferences = stockConferences.some((c) => c.productId === productId);
+    const supabase = getSupabaseClient();
 
     if (hasSalesHistory || hasStockMovements || hasStockAdjustments || hasConferences) {
-      // Inactivate product
-      setProducts((prev) =>
-        prev.map((p) => (p.id === productId ? { ...p, isActive: false } : p))
-      );
+      const deactivated: Product = { ...prod, isActive: false };
+      setProducts((prev) => prev.map((p) => (p.id === productId ? deactivated : p)));
+
+      if (supabase) {
+        supabase.from('products').upsert(mapProductToDb(deactivated)).then();
+      }
+
       addAuditLog(
         `Produto inativado: ${prod.name}`,
         'estoque',
@@ -1502,13 +1973,18 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         message: `O produto "${prod.name}" possui movimentações ou vendas registradas no sistema. Por segurança contábil, ele foi inativado no catálogo (não aparecerá em novas vendas, mas preservará todo o histórico).`,
       };
     } else {
-      // Permanently Delete product
       setProducts((prev) => prev.filter((p) => p.id !== productId));
       setStock((prev) => {
         const next = { ...prev };
         delete next[productId];
         return next;
       });
+
+      if (supabase) {
+        supabase.from('stock').delete().eq('product_id', productId).then();
+        supabase.from('products').delete().eq('id', productId).then();
+      }
+
       addAuditLog(
         `Produto excluído: ${prod.name}`,
         'estoque',
@@ -1530,14 +2006,27 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       createdAt: new Date().toISOString(),
     };
     setClients((prev) => [newClient, ...prev]);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('clients').insert(mapClientToDb(newClient)).then();
+    }
+
     addAuditLog('Cliente cadastrado', 'cliente', `Nome: ${newClient.name} | Tel: ${newClient.phone}`);
     return id;
   };
 
   const updateClient = (id: string, updates: Partial<Client>) => {
-    setClients((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, ...updates } : c))
-    );
+    const existing = clients.find((c) => c.id === id);
+    if (!existing) return;
+
+    const updated: Client = { ...existing, ...updates };
+    setClients((prev) => prev.map((c) => (c.id === id ? updated : c)));
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('clients').upsert(mapClientToDb(updated)).then();
+    }
   };
 
   const addDeliveryPerson = (dp: Omit<DeliveryPerson, 'id'>) => {
@@ -1546,13 +2035,26 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       id: `del-${Date.now()}`,
     };
     setDeliveryPersons((prev) => [...prev, newDp]);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('delivery_persons').insert(mapDeliveryPersonToDb(newDp)).then();
+    }
+
     addAuditLog('Entregador cadastrado', 'cliente', `Nome: ${newDp.name} | Tel: ${newDp.phone}`);
   };
 
   const updateDeliveryPerson = (id: string, updates: Partial<DeliveryPerson>) => {
-    setDeliveryPersons((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, ...updates } : d))
-    );
+    const existing = deliveryPersons.find((d) => d.id === id);
+    if (!existing) return;
+
+    const updated: DeliveryPerson = { ...existing, ...updates };
+    setDeliveryPersons((prev) => prev.map((d) => (d.id === id ? updated : d)));
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('delivery_persons').upsert(mapDeliveryPersonToDb(updated)).then();
+    }
   };
 
   const addSupplier = (supplier: Omit<Supplier, 'id'>) => {
@@ -1561,16 +2063,29 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       id: `sup-${Date.now()}`,
     };
     setSuppliers((prev) => [...prev, newSup]);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('suppliers').insert(mapSupplierToDb(newSup)).then();
+    }
+
     addAuditLog('Fornecedor cadastrado', 'financeiro', `Nome: ${newSup.name}`);
   };
 
   const updateSupplier = (id: string, updates: Partial<Supplier>) => {
-    setSuppliers((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
-    );
+    const existing = suppliers.find((s) => s.id === id);
+    if (!existing) return;
+
+    const updated: Supplier = { ...existing, ...updates };
+    setSuppliers((prev) => prev.map((s) => (s.id === id ? updated : s)));
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('suppliers').upsert(mapSupplierToDb(updated)).then();
+    }
   };
 
-  // 11. BACKUP & RESTORE
+  // 12. BACKUP & RESTORE
   const resetToSampleData = () => {
     setProducts(INITIAL_PRODUCTS);
     setStock(INITIAL_STOCK);
@@ -1588,6 +2103,11 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     setAuditLogs(INITIAL_AUDIT_LOGS);
     setStockConferences([]);
     setCashConferences([]);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      syncCurrentDataToSupabase();
+    }
   };
 
   const clearAllData = () => {
@@ -1623,19 +2143,32 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     setCashConferences([]);
     setAuditLogs([]);
 
-    // Reset stock quantities of all products to 0
-    setStock((prev) => {
-      const resetStock: Record<string, StockItem> = {};
-      products.forEach((p) => {
-        resetStock[p.id] = {
-          productId: p.id,
-          fullQuantity: 0,
-          emptyQuantity: 0,
-          lastUpdated: new Date().toISOString(),
-        };
-      });
-      return resetStock;
+    const resetStock: Record<string, StockItem> = {};
+    products.forEach((p) => {
+      resetStock[p.id] = {
+        productId: p.id,
+        fullQuantity: 0,
+        emptyQuantity: 0,
+        lastUpdated: new Date().toISOString(),
+      };
     });
+    setStock(resetStock);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      // Clear operational tables on Supabase
+      supabase.from('sales').delete().neq('id', '0').then();
+      supabase.from('receivables').delete().neq('id', '0').then();
+      supabase.from('payables').delete().neq('id', '0').then();
+      supabase.from('cash_registers').delete().neq('id', '0').then();
+      supabase.from('cash_movements').delete().neq('id', '0').then();
+      supabase.from('expenses').delete().neq('id', '0').then();
+      supabase.from('stock_movements').delete().neq('id', '0').then();
+      supabase.from('stock_adjustments').delete().neq('id', '0').then();
+      supabase.from('stock_conferences').delete().neq('id', '0').then();
+      supabase.from('cash_conferences').delete().neq('id', '0').then();
+      supabase.from('stock').upsert(Object.values(resetStock).map(mapStockToDb)).then();
+    }
 
     addAuditLog(
       'Dados operacionais zerados',
@@ -1699,6 +2232,11 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       setAuditLogs(data.auditLogs || []);
       setStockConferences(data.stockConferences || []);
       setCashConferences(data.cashConferences || []);
+
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        syncCurrentDataToSupabase();
+      }
       return true;
     } catch (e) {
       console.error('Import database error', e);
@@ -1706,7 +2244,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // 12. COMPUTED HELPERS
+  // 13. COMPUTED HELPERS
   const totalFullCylinders = useMemo(() => {
     return Object.entries(stock).reduce((acc, [prodId, item]) => {
       const p = products.find((prod) => prod.id === prodId);
@@ -1803,6 +2341,13 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         auditLogs,
         stockConferences,
         cashConferences,
+        settings,
+        isOnlineDb,
+        dbSyncState,
+        lastSyncTime,
+        dbErrorMessage,
+        reloadFromOnlineDb,
+        syncCurrentDataToSupabase,
         createSale,
         updateDeliveryStatus,
         finalizeDelivery,
@@ -1814,7 +2359,6 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         closeCashRegister,
         addManualCashMovement,
         performCashConference,
-        settings,
         updateSettings,
         addExpense,
         updateExpense,

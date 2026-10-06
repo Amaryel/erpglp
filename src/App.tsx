@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ErpProvider, useErp } from './context/ErpContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { Navbar, ActiveTab } from './components/Navbar';
 import { DashboardView } from './components/DashboardView';
 import { ActiveDeliveriesView } from './components/ActiveDeliveriesView';
@@ -15,16 +16,20 @@ import { AuditView } from './components/AuditView';
 import { ClientsView } from './components/ClientsView';
 import { ProductsView } from './components/ProductsView';
 import { ConfigView } from './components/ConfigView';
+import { UsersManagementView } from './components/UsersManagementView';
+import { LoginView } from './components/LoginView';
 import { NewSaleModal } from './components/NewSaleModal';
+import { SupabaseModal } from './components/SupabaseModal';
+import { RefreshCw } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [isNewSaleOpen, setIsNewSaleOpen] = useState(false);
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const handleSaleCreated = (saleId: string) => {
-    // When a sale is created, redirect to in-progress deliveries if activeTab is not already there
     setActiveTab('em_andamento');
   };
 
@@ -35,6 +40,7 @@ const MainLayout: React.FC = () => {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenNewSale={() => setIsNewSaleOpen(true)}
+        onOpenSupabase={() => setIsSupabaseModalOpen(true)}
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
         sidebarCollapsed={sidebarCollapsed}
@@ -81,6 +87,8 @@ const MainLayout: React.FC = () => {
 
           {activeTab === 'produtos' && <ProductsView />}
 
+          {activeTab === 'usuarios' && <UsersManagementView />}
+
           {activeTab === 'config' && <ConfigView />}
         </main>
       </div>
@@ -91,14 +99,42 @@ const MainLayout: React.FC = () => {
         onClose={() => setIsNewSaleOpen(false)}
         onSuccessSaleId={handleSaleCreated}
       />
+
+      {/* Supabase Online DB Configuration Modal */}
+      <SupabaseModal
+        isOpen={isSupabaseModalOpen}
+        onClose={() => setIsSupabaseModalOpen(false)}
+      />
     </div>
   );
+};
+
+const AuthGate: React.FC = () => {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen w-full bg-slate-950 flex flex-col items-center justify-center text-white p-4">
+        <RefreshCw className="w-8 h-8 text-amber-500 animate-spin mb-3" />
+        <span className="text-xs font-bold text-slate-300">Carregando sistema de gestão...</span>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginView />;
+  }
+
+  return <MainLayout />;
 };
 
 export default function App() {
   return (
     <ErpProvider>
-      <MainLayout />
+      <AuthProvider>
+        <AuthGate />
+      </AuthProvider>
     </ErpProvider>
   );
 }
+

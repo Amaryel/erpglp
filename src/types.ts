@@ -1,3 +1,19 @@
+export type UserRole = 'superadmin' | 'admin' | 'operador' | 'entregador';
+export type UserStatus = 'ativo' | 'bloqueado';
+
+export interface AppUser {
+  id: string;
+  username: string;
+  name: string;
+  role: UserRole;
+  status: UserStatus;
+  passwordHash?: string;
+  hasDefinedPassword?: boolean;
+  lastLoginAt?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export type PaymentMethod = 'dinheiro' | 'pix' | 'debito' | 'credito' | 'fiado' | 'outro';
 
 export type SaleType = 'balcao' | 'delivery';

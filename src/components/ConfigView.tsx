@@ -16,9 +16,24 @@ import {
   RefreshCw,
   FileCode,
   Lock,
+  Database,
+  Cloud,
+  Copy,
+  Check,
+  Zap,
+  Globe,
+  Key,
+  ExternalLink,
+  UploadCloud,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
-import { AppSettings } from '../types';
+import {
+  getStoredSupabaseConfig,
+  saveStoredSupabaseConfig,
+  clearStoredSupabaseConfig,
+  testSupabaseConnection,
+  SUPABASE_SCHEMA_SQL,
+} from '../lib/supabase';
 
 export const ConfigView: React.FC = () => {
   const {
@@ -29,26 +44,45 @@ export const ConfigView: React.FC = () => {
     clearOperationalData,
     generateSampleData,
     resetToSampleData,
+    isOnlineDb,
+    dbSyncState,
+    lastSyncTime,
+    dbErrorMessage,
+    reloadFromOnlineDb,
+    syncCurrentDataToSupabase,
   } = useErp();
 
   // Settings form state
   const [companyName, setCompanyName] = useState(settings?.companyName || 'ErpGLP Distribuidora de Gás');
-  const [tradeName, setTradeName] = useState(settings?.tradeName || 'Disk Gás & Água');
+  const [tradingName, setTradingName] = useState(settings?.tradingName || 'ErpGLP Gás & Água');
   const [cnpj, setCnpj] = useState(settings?.cnpj || '12.345.678/0001-90');
   const [phone, setPhone] = useState(settings?.phone || '(11) 98765-4321');
   const [address, setAddress] = useState(settings?.address || 'Av. Principal, 1000');
   const [neighborhood, setNeighborhood] = useState(settings?.neighborhood || 'Centro');
   const [city, setCity] = useState(settings?.city || 'São Paulo - SP');
   const [pixKey, setPixKey] = useState(settings?.pixKey || '12345678000190');
-  const [receiptFooter, setReceiptFooter] = useState(
-    settings?.receiptFooter || 'Agradecemos a sua preferência! ErpGLP - Pedidos Rápidos'
+  const [receiptFooterMessage, setReceiptFooterMessage] = useState(
+    settings?.receiptFooterMessage || 'Agradecemos a sua preferência! ErpGLP - Pedidos Rápidos'
   );
-  const [defaultDeliveryFee, setDefaultDeliveryFee] = useState<number>(
-    settings?.defaultDeliveryFee ?? 5
+  const [deliveryFee, setDeliveryFee] = useState<number>(
+    settings?.deliveryFee ?? 0
   );
   const [defaultMinStock, setDefaultMinStock] = useState<number>(
     settings?.defaultMinStock ?? 10
   );
+
+  // Supabase connection state
+  const storedConfig = getStoredSupabaseConfig();
+  const [supabaseUrl, setSupabaseUrl] = useState(storedConfig.url);
+  const [supabaseKey, setSupabaseKey] = useState(storedConfig.anonKey);
+  const [copiedSql, setCopiedSql] = useState(false);
+  const [testingDb, setTestingDb] = useState(false);
+  const [seedingDb, setSeedingDb] = useState(false);
+  const [dbTestResult, setDbTestResult] = useState<{
+    success: boolean;
+    message: string;
+    latencyMs?: number;
+  } | null>(null);
 
   // Status feedback
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -68,19 +102,90 @@ export const ConfigView: React.FC = () => {
     e.preventDefault();
     updateSettings({
       companyName: companyName.trim(),
-      tradeName: tradeName.trim(),
+      tradingName: tradingName.trim(),
       cnpj: cnpj.trim(),
       phone: phone.trim(),
       address: address.trim(),
       neighborhood: neighborhood.trim(),
       city: city.trim(),
       pixKey: pixKey.trim(),
-      receiptFooter: receiptFooter.trim(),
-      defaultDeliveryFee: Number(defaultDeliveryFee) || 0,
+      receiptFooterMessage: receiptFooterMessage.trim(),
+      deliveryFee: Number(deliveryFee) || 0,
       defaultMinStock: Number(defaultMinStock) || 0,
     });
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 3000);
+  };
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(SUPABASE_SCHEMA_SQL);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 3000);
+  };
+
+  const handleSaveAndConnectDb = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanUrl = supabaseUrl.trim();
+    const cleanKey = supabaseKey.trim();
+
+    if (!cleanUrl || !cleanKey) {
+      setDbTestResult({
+        success: false,
+        message: 'Informe a URL do projeto e a chave Anon do Supabase.',
+      });
+      return;
+    }
+
+    setTestingDb(true);
+    setDbTestResult(null);
+
+    saveStoredSupabaseConfig(cleanUrl, cleanKey);
+    const result = await testSupabaseConnection(cleanUrl, cleanKey);
+    setTestingDb(false);
+    setDbTestResult(result);
+
+    if (result.success) {
+      await reloadFromOnlineDb();
+    }
+  };
+
+  const handleSeedDataToCloud = async () => {
+    setSeedingDb(true);
+    setDbTestResult(null);
+    try {
+      const res = await syncCurrentDataToSupabase();
+      if (res.success) {
+        setDbTestResult({
+          success: true,
+          message: 'Dados locais enviados e sincronizados com sucesso no Supabase!',
+        });
+      } else {
+        setDbTestResult({
+          success: false,
+          message: `Erro ao enviar dados: ${res.error}`,
+        });
+      }
+    } catch (e: any) {
+      setDbTestResult({
+        success: false,
+        message: `Erro: ${e?.message || 'Falha ao sincronizar'}`,
+      });
+    } finally {
+      setSeedingDb(false);
+    }
+  };
+
+  const handleDisconnectSupabase = () => {
+    if (window.confirm('Deseja desconectar o Supabase? O sistema voltará a salvar localmente.')) {
+      clearStoredSupabaseConfig();
+      setSupabaseUrl('');
+      setSupabaseKey('');
+      setDbTestResult({
+        success: false,
+        message: 'Banco online desconectado.',
+      });
+      reloadFromOnlineDb();
+    }
   };
 
   // Real Backup Export
@@ -128,7 +233,6 @@ export const ConfigView: React.FC = () => {
       }
     };
     reader.readAsText(file);
-    // Reset file input value
     e.target.value = '';
   };
 
@@ -141,7 +245,6 @@ export const ConfigView: React.FC = () => {
         type: 'success',
         text: 'Dados restaurados com sucesso a partir do backup!',
       });
-      // reload settings state
       setTimeout(() => window.location.reload(), 1000);
     } else {
       setActionMessage({
@@ -157,7 +260,7 @@ export const ConfigView: React.FC = () => {
     setConfirmClearOpen(false);
     setActionMessage({
       type: 'success',
-      text: 'Dados operacionais zerados com sucesso! Vendas, caixa, contas e movimentações foram limpos para novo ciclo de testes.',
+      text: 'Dados operacionais zerados com sucesso! Vendas, caixa, contas e movimentações foram limpos para novo ciclo.',
     });
   };
 
@@ -181,10 +284,10 @@ export const ConfigView: React.FC = () => {
           </div>
           <div>
             <h1 className="text-lg sm:text-xl font-black text-slate-900">
-              Configurações & Backup
+              Configurações & Banco de Dados Online
             </h1>
             <p className="text-xs text-slate-500">
-              Gerencie dados da empresa, comprovantes, rotinas de backup e ferramentas de teste
+              Gerencie a conexão online com o Supabase, dados da empresa, comprovantes e backup
             </p>
           </div>
         </div>
@@ -223,6 +326,212 @@ export const ConfigView: React.FC = () => {
         </div>
       )}
 
+      {/* SECTION 1: SUPABASE ONLINE DATABASE INTEGRATION (PROMINENT) */}
+      <div className="bg-gradient-to-br from-slate-900 via-slate-850 to-slate-900 rounded-3xl p-5 sm:p-6 text-white border border-slate-800 shadow-lg space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-inner shrink-0">
+              <Database className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-black text-white">
+                  Banco de Dados Online (Supabase)
+                </h2>
+                <span
+                  className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
+                    isOnlineDb
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                  }`}
+                >
+                  {isOnlineDb ? '🟢 Conectado & Online' : '🟡 Modo Local (Offline)'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Garante que qualquer celular, tablet ou computador acesse a mesma base de dados em tempo real.
+              </p>
+            </div>
+          </div>
+
+          {isOnlineDb && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={reloadFromOnlineDb}
+                disabled={dbSyncState === 'syncing'}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 flex items-center gap-1.5 transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${dbSyncState === 'syncing' ? 'animate-spin' : ''}`} />
+                <span>Atualizar Nuvem</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDisconnectSupabase}
+                className="px-3 py-1.5 bg-red-950/60 hover:bg-red-900/80 text-red-300 text-xs font-bold rounded-xl border border-red-800/60 transition-colors"
+              >
+                Desconectar
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Database feedback banner */}
+        {dbTestResult && (
+          <div
+            className={`p-3.5 rounded-2xl border text-xs font-medium flex items-start gap-2.5 ${
+              dbTestResult.success
+                ? 'bg-emerald-950/70 border-emerald-700/60 text-emerald-200'
+                : 'bg-rose-950/70 border-rose-700/60 text-rose-200'
+            }`}
+          >
+            {dbTestResult.success ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            )}
+            <div className="flex-1">
+              <div>{dbTestResult.message}</div>
+              {dbTestResult.latencyMs !== undefined && (
+                <div className="text-[11px] font-mono mt-1 text-slate-400">
+                  Latência da Conexão: {dbTestResult.latencyMs}ms
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Step 1: SQL Schema Script */}
+          <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 space-y-3 flex flex-col justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black flex items-center justify-center text-xs">
+                    1
+                  </span>
+                  <h3 className="font-bold text-white text-xs sm:text-sm">
+                    Copiar Script SQL do Banco
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopySql}
+                  className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs ${
+                    copiedSql
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-amber-500 hover:bg-amber-600 text-slate-950 active:scale-95'
+                  }`}
+                >
+                  {copiedSql ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Script Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copiar Script SQL</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              <p className="text-slate-400 text-xs leading-relaxed">
+                No painel do Supabase, acesse o menu <strong>SQL Editor</strong> &gt; <strong>New Query</strong> &gt; cole o script e clique em <strong>Run</strong>.
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <a
+                href="https://supabase.com/dashboard"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-amber-400 hover:text-amber-300 font-bold text-xs flex items-center gap-1.5 underline"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Abrir Dashboard do Supabase (SQL Editor)</span>
+              </a>
+            </div>
+          </div>
+
+          {/* Step 2: Supabase Credentials Form */}
+          <form onSubmit={handleSaveAndConnectDb} className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black flex items-center justify-center text-xs">
+                2
+              </span>
+              <h3 className="font-bold text-white text-xs sm:text-sm">
+                Colar Credenciais do Supabase
+              </h3>
+            </div>
+
+            <div className="space-y-2.5">
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 block mb-1 flex items-center gap-1">
+                  <Globe className="w-3 h-3 text-blue-400" />
+                  <span>Project URL *</span>
+                </label>
+                <input
+                  type="url"
+                  required
+                  placeholder="https://exemplo.supabase.co"
+                  value={supabaseUrl}
+                  onChange={(e) => setSupabaseUrl(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2 font-mono text-xs text-white placeholder-slate-500 focus:ring-1 focus:ring-amber-500 outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 block mb-1 flex items-center gap-1">
+                  <Key className="w-3 h-3 text-amber-400" />
+                  <span>API Key (anon / public) *</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  value={supabaseKey}
+                  onChange={(e) => setSupabaseKey(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2 font-mono text-xs text-white placeholder-slate-500 focus:ring-1 focus:ring-amber-500 outline-hidden"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              {isOnlineDb && (
+                <button
+                  type="button"
+                  onClick={handleSeedDataToCloud}
+                  disabled={seedingDb}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl border border-slate-700 transition-colors flex items-center gap-1.5"
+                >
+                  <UploadCloud className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{seedingDb ? 'Enviando...' : 'Exportar Base Atual'}</span>
+                </button>
+              )}
+
+              <button
+                type="submit"
+                disabled={testingDb}
+                className="bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md transition-all flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {testingDb ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Testando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Conectar Banco Online</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Left Column: Company & Receipt Settings (2 cols) */}
         <div className="lg:col-span-2 space-y-4">
@@ -249,8 +558,8 @@ export const ConfigView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  value={tradeName}
-                  onChange={(e) => setTradeName(e.target.value)}
+                  value={tradingName}
+                  onChange={(e) => setTradingName(e.target.value)}
                   className="w-full border border-slate-300 rounded-xl p-2.5 font-medium"
                 />
               </div>
@@ -346,8 +655,8 @@ export const ConfigView: React.FC = () => {
                     type="number"
                     step="0.50"
                     min="0"
-                    value={defaultDeliveryFee}
-                    onChange={(e) => setDefaultDeliveryFee(parseFloat(e.target.value) || 0)}
+                    value={deliveryFee}
+                    onChange={(e) => setDeliveryFee(parseFloat(e.target.value) || 0)}
                     className="w-full border border-slate-300 rounded-xl p-2.5 font-bold"
                   />
                 </div>
@@ -371,8 +680,8 @@ export const ConfigView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={receiptFooter}
-                  onChange={(e) => setReceiptFooter(e.target.value)}
+                  value={receiptFooterMessage}
+                  onChange={(e) => setReceiptFooterMessage(e.target.value)}
                   className="w-full border border-slate-300 rounded-xl p-2.5 font-medium"
                 />
               </div>
@@ -527,7 +836,7 @@ export const ConfigView: React.FC = () => {
           <div className="bg-white rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
-                <Sparkles className="w-5 h-5" />
+                <Sparkles className="w-4 h-4" />
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900">

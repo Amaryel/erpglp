@@ -16,6 +16,8 @@ import {
   ChevronRight,
   Users,
   ShieldAlert,
+  Database,
+  Cloud,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
 import { formatCurrency, formatDate } from '../utils/formatters';
@@ -45,6 +47,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     totalEmptyCylinders,
     criticalStockCount,
     inProgressDeliveriesCount,
+    isOnlineDb,
+    dbSyncState,
+    lastSyncTime,
   } = useErp();
 
   const [period, setPeriod] = useState<DatePeriod>('hoje');
@@ -153,13 +158,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="space-y-4 sm:space-y-6 pb-12">
-      {/* Top Banner with Quick Actions */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-4 sm:p-6 shadow-md relative overflow-hidden">
+      {/* Top Banner with Quick Actions & Online Status */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-4 sm:p-6 shadow-md relative overflow-hidden space-y-4">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-semibold mb-2 border border-amber-500/30">
-              <Flame className="w-3.5 h-3.5" />
-              <span>Painel Operacional ErpGLP</span>
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-semibold border border-amber-500/30">
+                <Flame className="w-3.5 h-3.5" />
+                <span>Painel Operacional ErpGLP</span>
+              </div>
+              <button
+                onClick={() => setActiveTab('config')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold transition-all ${
+                  isOnlineDb
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
+                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 animate-pulse'
+                }`}
+              >
+                <Database className="w-3 h-3" />
+                <span>{isOnlineDb ? '🟢 Banco Online (Supabase Conectado)' : '🟡 Conectar Banco Online (Supabase)'}</span>
+                {lastSyncTime && isOnlineDb && (
+                  <span className="text-[10px] text-slate-300 font-normal">({lastSyncTime})</span>
+                )}
+              </button>
             </div>
             <h1 className="text-xl sm:text-2xl font-black tracking-tight">
               Visão Geral da Revenda
