@@ -26,6 +26,10 @@ export interface SupabaseConfig {
   isConfigured: boolean;
 }
 
+// Configuração definitiva do Supabase para acesso online contínuo em qualquer dispositivo
+export const EMBEDDED_SUPABASE_URL = 'https://vywafdtbjdcthwooyoqz.supabase.co';
+export const EMBEDDED_SUPABASE_ANON_KEY = 'sb_publishable_rkAdGls-vJtdoboVBSyu6Q_EWa7YIUs';
+
 const STORAGE_SUPABASE_KEY = 'erpglp_supabase_config_v1';
 
 export function getStoredSupabaseConfig(): SupabaseConfig {
@@ -33,16 +37,19 @@ export function getStoredSupabaseConfig(): SupabaseConfig {
   const envUrl = (metaEnv.VITE_SUPABASE_URL as string) || '';
   const envKey = (metaEnv.VITE_SUPABASE_ANON_KEY as string) || '';
 
+  let activeUrl = (envUrl || EMBEDDED_SUPABASE_URL).replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '').trim();
+  let activeKey = (envKey || EMBEDDED_SUPABASE_ANON_KEY).trim();
+
   try {
     const saved = localStorage.getItem(STORAGE_SUPABASE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (parsed.url && parsed.anonKey) {
-        return {
-          url: parsed.url.trim(),
-          anonKey: parsed.anonKey.trim(),
-          isConfigured: Boolean(parsed.url.trim() && parsed.anonKey.trim()),
-        };
+      if (parsed.url && parsed.anonKey && typeof parsed.url === 'string' && typeof parsed.anonKey === 'string') {
+        const savedCleanUrl = parsed.url.replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '').trim();
+        if (savedCleanUrl.startsWith('http')) {
+          activeUrl = savedCleanUrl;
+          activeKey = parsed.anonKey.trim();
+        }
       }
     }
   } catch (e) {
@@ -50,19 +57,19 @@ export function getStoredSupabaseConfig(): SupabaseConfig {
   }
 
   return {
-    url: envUrl.trim(),
-    anonKey: envKey.trim(),
-    isConfigured: Boolean(envUrl.trim() && envKey.trim()),
+    url: activeUrl,
+    anonKey: activeKey,
+    isConfigured: Boolean(activeUrl && activeKey),
   };
 }
 
 export function saveStoredSupabaseConfig(url: string, anonKey: string): void {
+  const cleanUrl = url.replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '').trim();
   try {
     localStorage.setItem(
       STORAGE_SUPABASE_KEY,
-      JSON.stringify({ url: url.trim(), anonKey: anonKey.trim() })
+      JSON.stringify({ url: cleanUrl, anonKey: anonKey.trim() })
     );
-    // Reset client cache so new instance is built
     cachedClient = null;
   } catch (e) {
     console.error('Error saving Supabase credentials to storage:', e);
@@ -112,68 +119,67 @@ export function getSupabaseClient(): SupabaseClient | null {
   }
 }
 
-export async function testSupabaseConnection(customUrl?: string, customKey?: string): Promise<{
-  success: boolean;
-  message: string;
-  latencyMs?: number;
-  tablesFound?: string[];
-}> {
-  const url = customUrl || getStoredSupabaseConfig().url;
-  const anonKey = customKey || getStoredSupabaseConfig().anonKey;
+export async function testSupabaseConnection(
+  customUrl?: string,
+  customKey?: string
+): Promise<{ success: boolean; message: string; latencyMs?: number }> {
+  const config = getStoredSupabaseConfig();
+  const url = customUrl || config.url;
+  const anonKey = customKey || config.anonKey;
 
   if (!url || !anonKey) {
     return {
       success: false,
-      message: 'URL e chave Anon do Supabase não foram informadas.',
+      message: 'Chave Anon ou URL do Supabase não configurados.',
     };
   }
 
   const startTime = Date.now();
+
   try {
     const tempClient = createClient(url, anonKey);
     
-    // Check if we can query products table
-    const { data: prodData, error: prodError } = await tempClient
-      .from('products')
-      .select('id')
+    // Check if we can query users or products table
+    const { data: userData, error: userError } = await tempClient
+      .from('users')
+      .select('id, username')
       .limit(1);
 
     const latencyMs = Date.now() - startTime;
 
-    if (prodError) {
+    if (userError) {
       // If table does not exist
-      if (prodError.code === '42P01' || prodError.message.includes('relation') || prodError.message.includes('does not exist')) {
+      if (userError.code === '42P01' || userError.message.includes('relation') || userError.message.includes('does not exist')) {
         return {
           success: false,
-          message: 'Conectado ao Supabase, mas as tabelas ainda não foram criadas. Copie e execute o script SQL abaixo no SQL Editor do Supabase.',
+          message: 'Conectado ao Supabase! Porém a tabela "users" ainda não foi criada. Execute o script SQL no SQL Editor do Supabase.',
           latencyMs,
         };
       }
 
-      // If invalid API key
-      if (prodError.code === 'PGRST301' || prodError.message.includes('JWT') || prodError.message.includes('apikey')) {
+      if (userError.code === 'PGRST301' || userError.message.includes('JWT') || userError.message.includes('apikey')) {
         return {
           success: false,
-          message: 'Chave Anon ou URL inválida. Verifique os dados em Configurações do Projeto > API no Supabase.',
+          message: 'Chave Anon ou URL inválida. Verifique as credenciais no painel do Supabase.',
         };
       }
 
       return {
         success: false,
-        message: `Erro ao conectar: ${prodError.message}`,
+        message: `Aviso na conexão: ${userError.message}`,
         latencyMs,
       };
     }
 
     return {
       success: true,
-      message: 'Conexão com o Supabase estabelecida com sucesso! Banco de dados online ativo e pronto.',
+      message: 'Conexão com o Supabase online estabelecida com sucesso! Tabelas ativas e operacionais.',
       latencyMs,
     };
   } catch (err: any) {
     return {
       success: false,
-      message: `Falha na conexão: ${err?.message || 'Verifique sua conexão com a internet e as credenciais informadas.'}`,
+      message: `Falha na conexão: ${err?.message || 'Verifique sua conexão com a internet.'}`,
     };
   }
 }
@@ -235,9 +241,9 @@ CREATE TABLE IF NOT EXISTS public.stock_movements (
   product_id TEXT NOT NULL,
   product_name TEXT NOT NULL,
   quantity NUMERIC NOT NULL,
-  stock_type TEXT NOT NULL, -- 'cheio', 'vazio', 'unitario'
-  direction TEXT NOT NULL,  -- 'entrada', 'saida'
-  type TEXT NOT NULL,       -- 'venda', 'retorno_vasilhame', 'entrada', 'ajuste_positivo', 'ajuste_negativo', etc.
+  stock_type TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  type TEXT NOT NULL,
   origin TEXT NOT NULL,
   related_sale_id TEXT,
   notes TEXT,
@@ -305,8 +311,8 @@ CREATE TABLE IF NOT EXISTS public.suppliers (
 CREATE TABLE IF NOT EXISTS public.sales (
   id TEXT PRIMARY KEY,
   sale_number BIGINT NOT NULL,
-  type TEXT NOT NULL, -- 'balcao' ou 'delivery'
-  status TEXT NOT NULL, -- 'pendente', 'em_entrega', 'aguardando_finalizacao', 'finalizada', 'cancelada'
+  type TEXT NOT NULL,
+  status TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   finalized_at TIMESTAMPTZ,
   client_id TEXT,
@@ -344,7 +350,7 @@ CREATE TABLE IF NOT EXISTS public.receivables (
   remaining_amount NUMERIC NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   due_date DATE,
-  status TEXT NOT NULL DEFAULT 'aberto', -- 'aberto', 'parcial', 'pago', 'vencido'
+  status TEXT NOT NULL DEFAULT 'aberto',
   payment_history JSONB NOT NULL DEFAULT '[]'::jsonb,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -356,7 +362,7 @@ CREATE TABLE IF NOT EXISTS public.cash_registers (
   closed_at TIMESTAMPTZ,
   initial_balance NUMERIC NOT NULL DEFAULT 0,
   current_balance NUMERIC NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'aberto', -- 'aberto', 'fechado'
+  status TEXT NOT NULL DEFAULT 'aberto',
   physical_counted NUMERIC,
   difference NUMERIC,
   close_notes TEXT,
@@ -368,7 +374,7 @@ CREATE TABLE IF NOT EXISTS public.cash_movements (
   id TEXT PRIMARY KEY,
   cash_register_id TEXT NOT NULL,
   timestamp TIMESTAMPTZ DEFAULT NOW(),
-  type TEXT NOT NULL, -- 'venda', 'recebimento_fiado', 'entrada', 'saida', 'sangria', 'suprimento', 'pagamento_despesa', 'pagamento_fornecedor'
+  type TEXT NOT NULL,
   amount NUMERIC NOT NULL,
   method TEXT,
   payment_method TEXT,
@@ -406,7 +412,7 @@ CREATE TABLE IF NOT EXISTS public.payables (
   due_date DATE NOT NULL,
   paid_at TIMESTAMPTZ,
   payment_method TEXT,
-  status TEXT NOT NULL DEFAULT 'pendente', -- 'pendente', 'pago', 'vencido', 'cancelado'
+  status TEXT NOT NULL DEFAULT 'pendente',
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -458,8 +464,8 @@ CREATE TABLE IF NOT EXISTS public.users (
   id TEXT PRIMARY KEY,
   username TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'operador', -- 'superadmin', 'admin', 'operador', 'entregador'
-  status TEXT NOT NULL DEFAULT 'ativo',   -- 'ativo', 'bloqueado'
+  role TEXT NOT NULL DEFAULT 'operador',
+  status TEXT NOT NULL DEFAULT 'ativo',
   password_hash TEXT,
   has_defined_password BOOLEAN DEFAULT false,
   last_login_at TIMESTAMPTZ,
@@ -468,8 +474,8 @@ CREATE TABLE IF NOT EXISTS public.users (
 );
 
 -- ==============================================================================
--- POLÍTICAS DE ACESSO (ROW LEVEL SECURITY)
--- Permite leitura e escrita pública com a chave Anon para funcionamento direto
+-- PERMISSÕES E ROW LEVEL SECURITY (RLS)
+-- Permite leitura e escrita completa para a aplicação funcionar em tempo real
 -- ==============================================================================
 DO $$
 DECLARE
@@ -484,10 +490,14 @@ BEGIN
   FOREACH tbl IN ARRAY tables
   LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
-    EXECUTE format('DROP POLICY IF EXISTS "Public access on %I" ON public.%I;', tbl, tbl);
-    EXECUTE format('CREATE POLICY "Public access on %I" ON public.%I FOR ALL USING (true) WITH CHECK (true);', tbl, tbl);
+    EXECUTE format('DROP POLICY IF EXISTS "Public full access on %I" ON public.%I;', tbl, tbl);
+    EXECUTE format('CREATE POLICY "Public full access on %I" ON public.%I FOR ALL USING (true) WITH CHECK (true);', tbl, tbl);
   END LOOP;
 END $$;
+
+-- Concede permissões ao esquema public para anon e authenticated
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role, postgres;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role, postgres;
 
 -- ==============================================================================
 -- REALTIME MULTI-DISPOSITIVOS
@@ -524,7 +534,7 @@ INSERT INTO public.app_settings (id, company_name, trading_name, cnpj, phone, ad
 VALUES ('default', 'ErpGLP Distribuidora e Revenda de Gás Ltda', 'ErpGLP Gás & Água', '12.345.678/0001-90', '(11) 98765-4321', 'Av. das Nações, 1500', 'Centro', 'São Paulo - SP', 'financeiro@erpglp.com.br', 20, 0, 30, 'Agradecemos a sua preferência! ErpGLP - Qualidade, Segurança e Rapidez.')
 ON CONFLICT (id) DO NOTHING;
 
--- Inserir superadmin amaryel padrão se não existir
+-- Inserir usuário superadmin amaryel padrão se não existir (preserva senha caso já exista)
 INSERT INTO public.users (id, username, name, role, status, has_defined_password)
 VALUES ('usr-superadmin-01', 'amaryel', 'Amaryel Costa (Superadmin)', 'superadmin', 'ativo', false)
 ON CONFLICT (username) DO NOTHING;
@@ -550,14 +560,14 @@ export function mapDbProduct(row: any): Product {
 export function mapProductToDb(p: Product): any {
   return {
     id: p.id,
-    code: p.code,
+    code: p.code || '',
     name: p.name,
     cost_price: p.costPrice,
     sell_price: p.sellPrice,
-    category: p.category,
-    min_stock: p.minStock,
-    description: p.description,
-    unit: p.unit,
+    category: p.category || null,
+    min_stock: p.minStock || 0,
+    description: p.description || null,
+    unit: p.unit || 'UN',
     is_active: p.isActive,
     is_cylinder: p.isCylinder,
     updated_at: new Date().toISOString(),
@@ -582,6 +592,76 @@ export function mapStockToDb(s: StockItem): any {
   };
 }
 
+export function mapDbStockMovement(row: any): StockMovement {
+  return {
+    id: row.id,
+    timestamp: row.timestamp,
+    productId: row.product_id,
+    productName: row.product_name,
+    quantity: Number(row.quantity) || 0,
+    stockType: row.stock_type,
+    direction: row.direction,
+    type: row.type,
+    origin: row.origin,
+    relatedSaleId: row.related_sale_id || undefined,
+    notes: row.notes || undefined,
+    previousQty: row.previous_qty !== null ? Number(row.previous_qty) : undefined,
+    newQty: row.new_qty !== null ? Number(row.new_qty) : undefined,
+  };
+}
+
+export function mapStockMovementToDb(m: StockMovement): any {
+  return {
+    id: m.id,
+    timestamp: m.timestamp,
+    product_id: m.productId,
+    product_name: m.productName,
+    quantity: m.quantity,
+    stock_type: m.stockType,
+    direction: m.direction,
+    type: m.type,
+    origin: m.origin,
+    related_sale_id: m.relatedSaleId || null,
+    notes: m.notes || null,
+    previous_qty: m.previousQty ?? 0,
+    new_qty: m.newQty ?? 0,
+  };
+}
+
+export function mapDbStockAdjustment(row: any): StockAdjustment {
+  return {
+    id: row.id,
+    timestamp: row.timestamp,
+    productId: row.product_id,
+    productName: row.product_name,
+    previousFull: Number(row.previous_full) || 0,
+    newFull: Number(row.new_full) || 0,
+    diffFull: Number(row.diff_full) || 0,
+    previousEmpty: Number(row.previous_empty) || 0,
+    newEmpty: Number(row.new_empty) || 0,
+    diffEmpty: Number(row.diff_empty) || 0,
+    reason: row.reason || '',
+    notes: row.notes || undefined,
+  };
+}
+
+export function mapStockAdjustmentToDb(a: StockAdjustment): any {
+  return {
+    id: a.id,
+    timestamp: a.timestamp,
+    product_id: a.productId,
+    product_name: a.productName,
+    previous_full: a.previousFull,
+    new_full: a.newFull,
+    diff_full: a.diffFull,
+    previous_empty: a.previousEmpty,
+    new_empty: a.newEmpty,
+    diff_empty: a.diffEmpty,
+    reason: a.reason,
+    notes: a.notes || null,
+  };
+}
+
 export function mapDbClient(row: any): Client {
   return {
     id: row.id,
@@ -601,14 +681,13 @@ export function mapClientToDb(c: Client): any {
   return {
     id: c.id,
     name: c.name,
-    phone: c.phone,
-    address: c.address,
-    neighborhood: c.neighborhood,
-    reference: c.reference,
-    document: c.document,
-    credit_limit: c.creditLimit,
-    notes: c.notes,
-    created_at: c.createdAt,
+    phone: c.phone || '',
+    address: c.address || '',
+    neighborhood: c.neighborhood || '',
+    reference: c.reference || null,
+    document: c.document || null,
+    credit_limit: c.creditLimit || 0,
+    notes: c.notes || null,
     updated_at: new Date().toISOString(),
   };
 }
@@ -627,8 +706,8 @@ export function mapDeliveryPersonToDb(d: DeliveryPerson): any {
   return {
     id: d.id,
     name: d.name,
-    phone: d.phone,
-    vehicle: d.vehicle,
+    phone: d.phone || '',
+    vehicle: d.vehicle || null,
     is_active: d.isActive,
     updated_at: new Date().toISOString(),
   };
@@ -649,10 +728,10 @@ export function mapSupplierToDb(s: Supplier): any {
   return {
     id: s.id,
     name: s.name,
-    document: s.document,
-    phone: s.phone,
-    address: s.address,
-    notes: s.notes,
+    document: s.document || null,
+    phone: s.phone || null,
+    address: s.address || null,
+    notes: s.notes || null,
     updated_at: new Date().toISOString(),
   };
 }
@@ -660,7 +739,7 @@ export function mapSupplierToDb(s: Supplier): any {
 export function mapDbSale(row: any): Sale {
   return {
     id: row.id,
-    saleNumber: Number(row.sale_number),
+    saleNumber: Number(row.sale_number) || 0,
     type: row.type,
     status: row.status,
     createdAt: row.created_at,
@@ -672,14 +751,14 @@ export function mapDbSale(row: any): Sale {
     clientNeighborhood: row.client_neighborhood || undefined,
     deliveryPersonId: row.delivery_person_id || undefined,
     deliveryPersonName: row.delivery_person_name || undefined,
-    items: Array.isArray(row.items) ? row.items : JSON.parse(row.items || '[]'),
+    items: Array.isArray(row.items) ? row.items : [],
     totalAmount: Number(row.total_amount) || 0,
     totalCost: Number(row.total_cost) || 0,
     grossProfit: Number(row.gross_profit) || 0,
     profitMargin: Number(row.profit_margin) || 0,
     dispatchedCylinders: Number(row.dispatched_cylinders) || 0,
     returnedCylinders: Number(row.returned_cylinders) || 0,
-    payments: Array.isArray(row.payments) ? row.payments : JSON.parse(row.payments || '[]'),
+    payments: Array.isArray(row.payments) ? row.payments : [],
     paidAmount: Number(row.paid_amount) || 0,
     fiadoAmount: Number(row.fiado_amount) || 0,
     notes: row.notes || undefined,
@@ -694,26 +773,26 @@ export function mapSaleToDb(s: Sale): any {
     type: s.type,
     status: s.status,
     created_at: s.createdAt,
-    finalized_at: s.finalizedAt,
-    client_id: s.clientId,
-    client_name: s.clientName,
-    client_phone: s.clientPhone,
-    client_address: s.clientAddress,
-    client_neighborhood: s.clientNeighborhood,
-    delivery_person_id: s.deliveryPersonId,
-    delivery_person_name: s.deliveryPersonName,
+    finalized_at: s.finalizedAt || null,
+    client_id: s.clientId || null,
+    client_name: s.clientName || null,
+    client_phone: s.clientPhone || null,
+    client_address: s.clientAddress || null,
+    client_neighborhood: s.clientNeighborhood || null,
+    delivery_person_id: s.deliveryPersonId || null,
+    delivery_person_name: s.deliveryPersonName || null,
     items: s.items,
     total_amount: s.totalAmount,
     total_cost: s.totalCost,
     gross_profit: s.grossProfit,
     profit_margin: s.profitMargin,
-    dispatched_cylinders: s.dispatchedCylinders,
-    returned_cylinders: s.returnedCylinders,
+    dispatched_cylinders: s.dispatchedCylinders || 0,
+    returned_cylinders: s.returnedCylinders || 0,
     payments: s.payments,
-    paid_amount: s.paidAmount,
-    fiado_amount: s.fiadoAmount,
-    notes: s.notes,
-    cancellation_reason: s.cancellationReason,
+    paid_amount: s.paidAmount || 0,
+    fiado_amount: s.fiadoAmount || 0,
+    notes: s.notes || null,
+    cancellation_reason: s.cancellationReason || null,
     updated_at: new Date().toISOString(),
   };
 }
@@ -722,8 +801,8 @@ export function mapDbReceivable(row: any): AccountReceivable {
   return {
     id: row.id,
     saleId: row.sale_id || '',
-    saleNumber: row.sale_number ? Number(row.sale_number) : 0,
-    clientId: row.client_id || '',
+    saleNumber: Number(row.sale_number) || 0,
+    clientId: row.client_id || undefined,
     clientName: row.client_name,
     clientPhone: row.client_phone || undefined,
     totalAmount: Number(row.total_amount) || 0,
@@ -732,23 +811,23 @@ export function mapDbReceivable(row: any): AccountReceivable {
     createdAt: row.created_at,
     dueDate: row.due_date || undefined,
     status: row.status,
-    paymentHistory: Array.isArray(row.payment_history) ? row.payment_history : JSON.parse(row.payment_history || '[]'),
+    paymentHistory: Array.isArray(row.payment_history) ? row.payment_history : [],
   };
 }
 
 export function mapReceivableToDb(r: AccountReceivable): any {
   return {
     id: r.id,
-    sale_id: r.saleId,
+    sale_id: r.saleId || null,
     sale_number: r.saleNumber,
-    client_id: r.clientId,
+    client_id: r.clientId || null,
     client_name: r.clientName,
-    client_phone: r.clientPhone,
+    client_phone: r.clientPhone || null,
     total_amount: r.totalAmount,
     paid_amount: r.paidAmount,
     remaining_amount: r.remainingAmount,
     created_at: r.createdAt,
-    due_date: r.dueDate,
+    due_date: r.dueDate || null,
     status: r.status,
     payment_history: r.paymentHistory,
     updated_at: new Date().toISOString(),
@@ -769,17 +848,17 @@ export function mapDbCashRegister(row: any): CashRegister {
   };
 }
 
-export function mapCashRegisterToDb(cr: CashRegister): any {
+export function mapCashRegisterToDb(c: CashRegister): any {
   return {
-    id: cr.id,
-    opened_at: cr.openedAt,
-    closed_at: cr.closedAt,
-    initial_balance: cr.initialBalance,
-    current_balance: cr.currentBalance,
-    status: cr.status,
-    physical_counted: cr.physicalCounted,
-    difference: cr.difference,
-    close_notes: cr.closeNotes,
+    id: c.id,
+    opened_at: c.openedAt,
+    closed_at: c.closedAt || null,
+    initial_balance: c.initialBalance,
+    current_balance: c.currentBalance,
+    status: c.status,
+    physical_counted: c.physicalCounted ?? null,
+    difference: c.difference ?? null,
+    close_notes: c.closeNotes || null,
     updated_at: new Date().toISOString(),
   };
 }
@@ -792,7 +871,7 @@ export function mapDbCashMovement(row: any): CashMovement {
     type: row.type,
     amount: Number(row.amount) || 0,
     method: row.method || undefined,
-    paymentMethod: row.payment_method || row.method || undefined,
+    paymentMethod: row.payment_method || undefined,
     description: row.description,
     relatedSaleId: row.related_sale_id || undefined,
     relatedReceivableId: row.related_receivable_id || undefined,
@@ -800,20 +879,19 @@ export function mapDbCashMovement(row: any): CashMovement {
   };
 }
 
-export function mapCashMovementToDb(cm: CashMovement): any {
+export function mapCashMovementToDb(m: CashMovement): any {
   return {
-    id: cm.id,
-    cash_register_id: cm.cashRegisterId,
-    timestamp: cm.timestamp,
-    type: cm.type,
-    amount: cm.amount,
-    method: cm.method,
-    payment_method: cm.paymentMethod,
-    description: cm.description,
-    related_sale_id: cm.relatedSaleId,
-    related_receivable_id: cm.relatedReceivableId,
-    related_expense_id: cm.relatedExpenseId,
-    created_at: new Date().toISOString(),
+    id: m.id,
+    cash_register_id: m.cashRegisterId,
+    timestamp: m.timestamp,
+    type: m.type,
+    amount: m.amount,
+    method: m.method || null,
+    payment_method: m.paymentMethod || null,
+    description: m.description,
+    related_sale_id: m.relatedSaleId || null,
+    related_receivable_id: m.relatedReceivableId || null,
+    related_expense_id: m.relatedExpenseId || null,
   };
 }
 
@@ -824,7 +902,7 @@ export function mapDbExpense(row: any): Expense {
     category: row.category,
     amount: Number(row.amount) || 0,
     method: row.method || undefined,
-    paymentMethod: row.payment_method || row.method || undefined,
+    paymentMethod: row.payment_method || undefined,
     date: row.date,
     paidFromCash: Boolean(row.paid_from_cash),
     supplier: row.supplier || undefined,
@@ -838,13 +916,12 @@ export function mapExpenseToDb(e: Expense): any {
     description: e.description,
     category: e.category,
     amount: e.amount,
-    method: e.method,
-    payment_method: e.paymentMethod,
+    method: e.method || null,
+    payment_method: e.paymentMethod || null,
     date: e.date,
     paid_from_cash: e.paidFromCash,
-    supplier: e.supplier,
-    notes: e.notes,
-    created_at: new Date().toISOString(),
+    supplier: e.supplier || null,
+    notes: e.notes || null,
   };
 }
 
@@ -869,89 +946,17 @@ export function mapPayableToDb(p: AccountPayable): any {
   return {
     id: p.id,
     description: p.description,
-    supplier_id: p.supplierId,
-    supplier_name: p.supplierName,
-    supplier: p.supplier,
+    supplier_id: p.supplierId || null,
+    supplier_name: p.supplierName || null,
+    supplier: p.supplier || null,
     category: p.category,
     amount: p.amount,
     due_date: p.dueDate,
-    paid_at: p.paidAt,
-    payment_method: p.paymentMethod,
+    paid_at: p.paidAt || null,
+    payment_method: p.paymentMethod || null,
     status: p.status,
-    notes: p.notes,
+    notes: p.notes || null,
     updated_at: new Date().toISOString(),
-  };
-}
-
-export function mapDbStockMovement(row: any): StockMovement {
-  return {
-    id: row.id,
-    timestamp: row.timestamp,
-    productId: row.product_id,
-    productName: row.product_name,
-    quantity: Number(row.quantity) || 0,
-    stockType: row.stock_type,
-    direction: row.direction,
-    type: row.type,
-    origin: row.origin,
-    relatedSaleId: row.related_sale_id || undefined,
-    notes: row.notes || undefined,
-    previousQty: Number(row.previous_qty) || 0,
-    newQty: Number(row.new_qty) || 0,
-  };
-}
-
-export function mapStockMovementToDb(sm: StockMovement): any {
-  return {
-    id: sm.id,
-    timestamp: sm.timestamp,
-    product_id: sm.productId,
-    product_name: sm.productName,
-    quantity: sm.quantity,
-    stock_type: sm.stockType,
-    direction: sm.direction,
-    type: sm.type,
-    origin: sm.origin,
-    related_sale_id: sm.relatedSaleId,
-    notes: sm.notes,
-    previous_qty: sm.previousQty,
-    new_qty: sm.newQty,
-    created_at: new Date().toISOString(),
-  };
-}
-
-export function mapDbStockAdjustment(row: any): StockAdjustment {
-  return {
-    id: row.id,
-    timestamp: row.timestamp,
-    productId: row.product_id,
-    productName: row.product_name,
-    previousFull: Number(row.previous_full) || 0,
-    newFull: Number(row.new_full) || 0,
-    diffFull: Number(row.diff_full) || 0,
-    previousEmpty: Number(row.previous_empty) || 0,
-    newEmpty: Number(row.new_empty) || 0,
-    diffEmpty: Number(row.diff_empty) || 0,
-    reason: row.reason || '',
-    notes: row.notes || undefined,
-  };
-}
-
-export function mapStockAdjustmentToDb(sa: StockAdjustment): any {
-  return {
-    id: sa.id,
-    timestamp: sa.timestamp,
-    product_id: sa.productId,
-    product_name: sa.productName,
-    previous_full: sa.previousFull,
-    new_full: sa.newFull,
-    diff_full: sa.diffFull,
-    previous_empty: sa.previousEmpty,
-    new_empty: sa.newEmpty,
-    diff_empty: sa.diffEmpty,
-    reason: sa.reason,
-    notes: sa.notes,
-    created_at: new Date().toISOString(),
   };
 }
 
@@ -961,24 +966,23 @@ export function mapDbAuditLog(row: any): AuditLog {
     timestamp: row.timestamp,
     action: row.action,
     category: row.category,
-    description: row.description || undefined,
-    details: row.details,
+    description: row.description || '',
+    details: row.details || undefined,
     saleId: row.sale_id || undefined,
     productId: row.product_id || undefined,
   };
 }
 
-export function mapAuditLogToDb(al: AuditLog): any {
+export function mapAuditLogToDb(a: AuditLog): any {
   return {
-    id: al.id,
-    timestamp: al.timestamp,
-    action: al.action,
-    category: al.category,
-    description: al.description,
-    details: al.details,
-    sale_id: al.saleId,
-    product_id: al.productId,
-    created_at: new Date().toISOString(),
+    id: a.id,
+    timestamp: a.timestamp,
+    action: a.action,
+    category: a.category,
+    description: a.description,
+    details: a.details || null,
+    sale_id: a.saleId || null,
+    product_id: a.productId || null,
   };
 }
 
@@ -994,26 +998,25 @@ export function mapDbStockConference(row: any): StockConference {
     systemEmpty: Number(row.system_empty) || 0,
     physicalEmpty: Number(row.physical_empty) || 0,
     diffEmpty: Number(row.diff_empty) || 0,
-    reason: row.reason || '',
+    reason: row.reason || undefined,
     adjusted: Boolean(row.adjusted),
   };
 }
 
-export function mapStockConferenceToDb(sc: StockConference): any {
+export function mapStockConferenceToDb(s: StockConference): any {
   return {
-    id: sc.id,
-    timestamp: sc.timestamp,
-    product_id: sc.productId,
-    product_name: sc.productName,
-    system_full: sc.systemFull,
-    physical_full: sc.physicalFull,
-    diff_full: sc.diffFull,
-    system_empty: sc.systemEmpty,
-    physical_empty: sc.physicalEmpty,
-    diff_empty: sc.diffEmpty,
-    reason: sc.reason,
-    adjusted: sc.adjusted,
-    created_at: new Date().toISOString(),
+    id: s.id,
+    timestamp: s.timestamp,
+    product_id: s.productId,
+    product_name: s.productName,
+    system_full: s.systemFull,
+    physical_full: s.physicalFull,
+    diff_full: s.diffFull,
+    system_empty: s.systemEmpty,
+    physical_empty: s.physicalEmpty,
+    diff_empty: s.diffEmpty,
+    reason: s.reason || null,
+    adjusted: s.adjusted,
   };
 }
 
@@ -1024,36 +1027,37 @@ export function mapDbCashConference(row: any): CashConference {
     expectedBalance: Number(row.expected_balance) || 0,
     physicalCounted: Number(row.physical_counted) || 0,
     difference: Number(row.difference) || 0,
-    notes: row.notes || '',
+    notes: row.notes || undefined,
   };
 }
 
-export function mapCashConferenceToDb(cc: CashConference): any {
+export function mapCashConferenceToDb(c: CashConference): any {
   return {
-    id: cc.id,
-    timestamp: cc.timestamp,
-    expected_balance: cc.expectedBalance,
-    physical_counted: cc.physicalCounted,
-    difference: cc.difference,
-    notes: cc.notes,
-    created_at: new Date().toISOString(),
+    id: c.id,
+    timestamp: c.timestamp,
+    expected_balance: c.expectedBalance,
+    physical_counted: c.physicalCounted,
+    difference: c.difference,
+    notes: c.notes || null,
   };
 }
 
 export function mapDbAppSettings(row: any): AppSettings {
   return {
-    companyName: row.company_name || 'ErpGLP Distribuidora de Gás',
+    companyName: row.company_name || 'ErpGLP Distribuidora e Revenda de Gás Ltda',
     tradingName: row.trading_name || 'ErpGLP Gás & Água',
-    cnpj: row.cnpj || '',
-    phone: row.phone || '',
-    address: row.address || '',
-    neighborhood: row.neighborhood || '',
-    city: row.city || '',
-    pixKey: row.pix_key || '',
-    defaultMinStock: row.default_min_stock !== null ? Number(row.default_min_stock) : 20,
-    deliveryFee: row.delivery_fee !== null ? Number(row.delivery_fee) : 0,
-    deliveryTimeMinutes: row.delivery_time_minutes !== null ? Number(row.delivery_time_minutes) : 30,
-    receiptFooterMessage: row.receipt_footer_message || '',
+    cnpj: row.cnpj || '12.345.678/0001-90',
+    phone: row.phone || '(11) 98765-4321',
+    address: row.address || 'Av. das Nações, 1500',
+    neighborhood: row.neighborhood || 'Centro',
+    city: row.city || 'São Paulo - SP',
+    pixKey: row.pix_key || 'financeiro@erpglp.com.br',
+    defaultMinStock: Number(row.default_min_stock) || 20,
+    deliveryFee: Number(row.delivery_fee) || 0,
+    deliveryTimeMinutes: Number(row.delivery_time_minutes) || 30,
+    receiptFooterMessage:
+      row.receipt_footer_message ||
+      'Agradecemos a sua preferência! ErpGLP - Qualidade, Segurança e Rapidez.',
   };
 }
 
@@ -1098,11 +1102,10 @@ export function mapUserToDb(user: AppUser): any {
     name: user.name,
     role: user.role,
     status: user.status,
-    password_hash: user.passwordHash,
-    has_defined_password: user.hasDefinedPassword,
-    last_login_at: user.lastLoginAt,
+    password_hash: user.passwordHash || null,
+    has_defined_password: Boolean(user.hasDefinedPassword),
+    last_login_at: user.lastLoginAt || null,
     created_at: user.createdAt,
     updated_at: user.updatedAt || new Date().toISOString(),
   };
 }
-

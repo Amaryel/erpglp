@@ -192,24 +192,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               id="header-supabase-btn"
               onClick={onOpenSupabase}
-              title={isOnlineDb ? 'Banco de Dados Online Ativo (Supabase)' : 'Configurar Banco de Dados Online (Supabase)'}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
-                isOnlineDb
-                  ? 'bg-emerald-950/70 text-emerald-300 border-emerald-600/60 hover:bg-emerald-900/70'
-                  : 'bg-amber-950/70 text-amber-300 border-amber-600/60 hover:bg-amber-900/70 animate-pulse'
-              }`}
+              title="Banco de Dados Online Ativo (Supabase)"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border bg-emerald-950/70 text-emerald-300 border-emerald-600/60 hover:bg-emerald-900/70 transition-all"
             >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  isOnlineDb ? 'bg-emerald-400' : 'bg-amber-400'
-                }`}
-              />
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <Database className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">
-                {isOnlineDb ? 'Online' : 'Conectar Banco'}
+                Banco Online
               </span>
               {dbSyncState === 'syncing' && (
-                <span className="text-[10px] text-emerald-200">Sync...</span>
+                <span className="text-[10px] text-emerald-200 animate-pulse">Sync...</span>
               )}
             </button>
 

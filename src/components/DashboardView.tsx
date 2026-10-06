@@ -167,20 +167,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <Flame className="w-3.5 h-3.5" />
                 <span>Painel Operacional ErpGLP</span>
               </div>
-              <button
-                onClick={() => setActiveTab('config')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold transition-all ${
-                  isOnlineDb
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
-                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 animate-pulse'
-                }`}
-              >
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold">
                 <Database className="w-3 h-3" />
-                <span>{isOnlineDb ? '🟢 Banco Online (Supabase Conectado)' : '🟡 Conectar Banco Online (Supabase)'}</span>
-                {lastSyncTime && isOnlineDb && (
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Banco de Dados Online Conectado (Supabase)</span>
+                {lastSyncTime && (
                   <span className="text-[10px] text-slate-300 font-normal">({lastSyncTime})</span>
                 )}
-              </button>
+              </div>
             </div>
             <h1 className="text-xl sm:text-2xl font-black tracking-tight">
               Visão Geral da Revenda

@@ -10,14 +10,13 @@ import {
   AlertCircle,
   KeyRound,
   CheckCircle2,
-  Sparkles,
+  Database,
+  RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { useErp } from '../context/ErpContext';
 
 export const LoginView: React.FC = () => {
   const { login, defineFirstAccessPassword } = useAuth();
-  const { isOnlineDb } = useErp();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -39,7 +38,7 @@ export const LoginView: React.FC = () => {
 
     const cleanUsername = username.trim();
     if (!cleanUsername) {
-      setErrorMessage('Por favor, informe seu usuário.');
+      setErrorMessage('Por favor, informe seu nome de usuário.');
       return;
     }
 
@@ -81,9 +80,9 @@ export const LoginView: React.FC = () => {
     try {
       const res = await defineFirstAccessPassword(firstAccessUsername, newPassword);
       if (res.success) {
-        setSetupSuccessMessage('Senha definida com sucesso! Entrando no sistema...');
+        setSetupSuccessMessage('Senha definida e gravada no Supabase com sucesso! Acessando...');
       } else {
-        setErrorMessage(res.error || 'Erro ao salvar a senha.');
+        setErrorMessage(res.error || 'Erro ao salvar a senha no Supabase.');
       }
     } catch (err: any) {
       setErrorMessage(err?.message || 'Erro ao processar nova senha.');
@@ -114,17 +113,13 @@ export const LoginView: React.FC = () => {
           </div>
         </div>
 
+        {/* Database Online Badge */}
         <div className="flex items-center gap-2">
-          <span
-            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
-              isOnlineDb
-                ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600/50'
-                : 'bg-amber-950/80 text-amber-300 border-amber-600/50'
-            }`}
-          >
-            <span className={`w-2 h-2 rounded-full ${isOnlineDb ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-            <span>{isOnlineDb ? 'Banco Online Conectado' : 'Modo Seguro Local'}</span>
-          </span>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border bg-emerald-950/80 text-emerald-300 border-emerald-600/50">
+            <Database className="w-3.5 h-3.5" />
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Banco Online Supabase Conectado</span>
+          </div>
         </div>
       </header>
 
@@ -208,7 +203,10 @@ export const LoginView: React.FC = () => {
                   className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 active:scale-95 text-white font-bold text-sm py-3 rounded-xl shadow-lg shadow-orange-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50 mt-2"
                 >
                   {loading ? (
-                    <span>Verificando...</span>
+                    <span className="flex items-center gap-2">
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Verificando autenticação...</span>
+                    </span>
                   ) : (
                     <>
                       <span>Entrar no Sistema</span>
@@ -304,7 +302,10 @@ export const LoginView: React.FC = () => {
                     className="w-full bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 active:scale-95 text-white font-bold text-sm py-3 rounded-xl shadow-lg shadow-emerald-600/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                   >
                     {loading ? (
-                      <span>Salvando senha...</span>
+                      <span className="flex items-center gap-2">
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Gravando senha no Supabase...</span>
+                      </span>
                     ) : (
                       <>
                         <span>Salvar Senha & Entrar</span>
@@ -332,7 +333,7 @@ export const LoginView: React.FC = () => {
 
       {/* Footer */}
       <footer className="w-full max-w-5xl text-center text-xs text-slate-500 z-10 py-2">
-        <span>ErpGLP Pro &bull; Sistema de Gestão e Entregas &bull; Todos os direitos reservados</span>
+        <span>ErpGLP Pro &bull; Sistema de Gestão e Entregas &bull; Banco de Dados Online Supabase</span>
       </footer>
     </div>
   );

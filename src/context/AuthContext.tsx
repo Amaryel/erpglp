@@ -19,18 +19,18 @@ interface AuthContextType {
   reloadUsers: () => Promise<void>;
 }
 
-const STORAGE_SESSION_KEY = 'erpglp_auth_session_v1';
-const STORAGE_USERS_KEY = 'erpglp_auth_users_v1';
+const STORAGE_SESSION_KEY = 'erpglp_auth_session_v2';
+const STORAGE_USERS_KEY = 'erpglp_auth_users_v2';
 
-// Initial default Superadmin User
-const DEFAULT_SUPERADMIN: AppUser = {
+// Usuário padrão inicial Superadmin (nome de usuário amaryel)
+export const DEFAULT_SUPERADMIN: AppUser = {
   id: 'usr-superadmin-01',
   username: 'amaryel',
   name: 'Amaryel Costa (Superadmin)',
   role: 'superadmin',
   status: 'ativo',
   hasDefinedPassword: false,
-  createdAt: new Date().toISOString(),
+  createdAt: '2026-01-01T00:00:00.000Z',
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -39,7 +39,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_SESSION_KEY);
-      return saved ? JSON.parse(saved) : null;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.id && parsed.username && parsed.status === 'ativo') {
+          return parsed;
+        }
+      }
+      return null;
     } catch {
       return null;
     }
@@ -48,7 +54,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [users, setUsers] = useState<AppUser[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_USERS_KEY);
-      return saved ? JSON.parse(saved) : [DEFAULT_SUPERADMIN];
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+      return [DEFAULT_SUPERADMIN];
     } catch {
       return [DEFAULT_SUPERADMIN];
     }
@@ -56,18 +68,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Sync users from Supabase or localStorage
+  // Carrega e sincroniza usuários diretamente do Supabase Online
   const reloadUsers = useCallback(async () => {
     const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.from('users').select('*').order('created_at', { ascending: true });
-        if (!error && data && data.length > 0) {
+    if (!supabase) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (!error && data) {
+        if (data.length > 0) {
           const mappedUsers = data.map(mapDbUser);
           setUsers(mappedUsers);
           localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(mappedUsers));
 
-          // If current user was updated/blocked in database, update local session
+          // Se o usuário logado atualmente sofreu alteração no banco (ex: bloqueado por superadmin)
           if (currentUser) {
             const freshCurrentUser = mappedUsers.find((u) => u.id === currentUser.id);
             if (freshCurrentUser) {
@@ -80,26 +98,30 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               }
             }
           }
-          return;
-        } else if (!error && data && data.length === 0) {
-          // If table exists but is empty, seed default superadmin
-          await supabase.from('users').insert(mapUserToDb(DEFAULT_SUPERADMIN));
+        } else {
+          // Se a tabela existe mas está vazia, insere o superadmin padrão
+          const { error: insertErr } = await supabase
+            .from('users')
+            .insert(mapUserToDb(DEFAULT_SUPERADMIN));
+          if (!insertErr) {
+            setUsers([DEFAULT_SUPERADMIN]);
+          }
         }
-      } catch (err) {
-        console.error('Error fetching users from Supabase:', err);
       }
+    } catch (err) {
+      console.error('Erro ao buscar usuários do Supabase:', err);
     }
   }, [currentUser]);
 
-  // Initial load
+  // Carga inicial
   useEffect(() => {
     reloadUsers().finally(() => setIsLoading(false));
 
-    // Listen to real-time user changes (e.g. if superadmin blocks a user on another device)
+    // Realtime Supabase: sincroniza usuários entre todos os dispositivos instantaneamente
     const supabase = getSupabaseClient();
     if (supabase) {
       const userChannel = supabase
-        .channel('public:users')
+        .channel('public:users_auth')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => {
           reloadUsers();
         })
@@ -111,16 +133,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [reloadUsers]);
 
-  // Save users to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(users));
-    } catch (e) {
-      console.error('Error saving users to localStorage:', e);
-    }
-  }, [users]);
-
-  // Login handler
+  // Login com validação direta online no Supabase
   const login = async (
     usernameInput: string,
     passwordInput?: string
@@ -130,22 +143,38 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return { success: false, error: 'Por favor, informe seu nome de usuário.' };
     }
 
-    // Refresh user list first
-    await reloadUsers();
+    const supabase = getSupabaseClient();
+    let userRow: any = null;
 
-    // Find user (case-insensitive)
-    let user = users.find((u) => u.username.toLowerCase() === cleanUsername);
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('username', cleanUsername)
+          .maybeSingle();
 
-    // If superadmin doesn't exist locally or on DB yet, fallback to default
+        if (!error && data) {
+          userRow = data;
+        }
+      } catch (err) {
+        console.error('Erro ao consultar usuário no Supabase:', err);
+      }
+    }
+
+    // Se não encontrou no Supabase, tenta buscar na lista local
+    let user: AppUser | undefined = userRow ? mapDbUser(userRow) : users.find((u) => u.username.toLowerCase() === cleanUsername);
+
+    // Fallback: Se for amaryel e ainda não existir registro no Supabase
     if (!user && cleanUsername === 'amaryel') {
       user = DEFAULT_SUPERADMIN;
     }
 
     if (!user) {
-      return { success: false, error: 'Usuário não encontrado. Verifique os dados digitados.' };
+      return { success: false, error: 'Usuário não encontrado no sistema. Verifique os dados digitados.' };
     }
 
-    // Check if user is blocked
+    // 1. Validação de bloqueio
     if (user.status === 'bloqueado') {
       return {
         success: false,
@@ -153,26 +182,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       };
     }
 
-    // Check first access password definition
+    // 2. Primeiro Acesso: Senha ainda não definida
     if (!user.hasDefinedPassword || !user.passwordHash) {
       return {
         success: false,
         requiresPasswordSetup: true,
-        error: 'Primeiro acesso detectado. Defina sua senha de acesso agora.',
+        error: 'Primeiro acesso detectado. Por favor, defina sua senha de segurança.',
       };
     }
 
-    // Verify password
-    if (!passwordInput) {
-      return { success: false, error: 'Por favor, digite sua senha.' };
+    // 3. Usuário já tem senha definida -> A senha é estritamente OBRIGATÓRIA
+    if (!passwordInput || !passwordInput.trim()) {
+      return { success: false, error: 'Por favor, digite sua senha de acesso.' };
     }
 
+    // Validação criptográfica do hash SHA-256
     const isValid = await verifyPassword(passwordInput, user.passwordHash);
     if (!isValid) {
-      return { success: false, error: 'Senha incorreta. Tente novamente.' };
+      return { success: false, error: 'Senha incorreta. Verifique e tente novamente.' };
     }
 
-    // Login successful
+    // Login autorizado com sucesso
     const updatedUser: AppUser = {
       ...user,
       lastLoginAt: new Date().toISOString(),
@@ -181,17 +211,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setCurrentUser(updatedUser);
     localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(updatedUser));
 
-    // Update in users list & database
-    setUsers((prev) => prev.map((u) => (u.id === user?.id ? updatedUser : u)));
-    const supabase = getSupabaseClient();
+    // Atualiza data de último login no Supabase
     if (supabase) {
-      supabase.from('users').update({ last_login_at: updatedUser.lastLoginAt }).eq('id', user.id).then();
+      supabase
+        .from('users')
+        .update({ last_login_at: updatedUser.lastLoginAt })
+        .eq('id', user.id)
+        .then();
     }
 
     return { success: true };
   };
 
-  // Define Password for First Access (e.g. Superadmin or new user)
+  // Define a senha de primeiro acesso e grava no Supabase Online
   const defineFirstAccessPassword = async (
     usernameInput: string,
     newPassword: string
@@ -201,53 +233,87 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return { success: false, error: 'Usuário não informado.' };
     }
     if (!newPassword || newPassword.length < 4) {
-      return { success: false, error: 'A senha deve ter pelo menos 4 caracteres.' };
+      return { success: false, error: 'A nova senha deve ter no mínimo 4 caracteres.' };
     }
 
-    let user = users.find((u) => u.username.toLowerCase() === cleanUsername);
-    if (!user && cleanUsername === 'amaryel') {
-      user = DEFAULT_SUPERADMIN;
+    const supabase = getSupabaseClient();
+
+    // Consulta direta no Supabase para garantir que ninguém definiu a senha em outro navegador
+    let existingDbUser: any = null;
+    if (supabase) {
+      const { data } = await supabase
+        .from('users')
+        .select('*')
+        .eq('username', cleanUsername)
+        .maybeSingle();
+      existingDbUser = data;
     }
 
-    if (!user) {
-      return { success: false, error: 'Usuário não encontrado.' };
+    // Trava de segurança: se a senha já foi definida no banco, impede sobrescrita
+    if (existingDbUser && existingDbUser.has_defined_password && existingDbUser.password_hash) {
+      return {
+        success: false,
+        error: 'A senha deste usuário já foi definida anteriormente no banco online. Faça login normal com sua senha.',
+      };
     }
 
     const passwordHash = await hashPassword(newPassword);
+    const userId = existingDbUser?.id || (cleanUsername === 'amaryel' ? DEFAULT_SUPERADMIN.id : `usr-${Date.now()}`);
+    const userName = existingDbUser?.name || (cleanUsername === 'amaryel' ? DEFAULT_SUPERADMIN.name : cleanUsername);
+    const userRole = existingDbUser?.role || (cleanUsername === 'amaryel' ? 'superadmin' : 'operador');
+
     const updatedUser: AppUser = {
-      ...user,
+      id: userId,
+      username: cleanUsername,
+      name: userName,
+      role: userRole,
+      status: 'ativo',
       passwordHash,
       hasDefinedPassword: true,
       lastLoginAt: new Date().toISOString(),
+      createdAt: existingDbUser?.created_at || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
+    // Grava diretamente no Supabase Online
+    if (supabase) {
+      const dbPayload = mapUserToDb(updatedUser);
+      const { error: upsertErr } = await supabase
+        .from('users')
+        .upsert(dbPayload, { onConflict: 'username' });
+
+      if (upsertErr) {
+        console.error('Erro ao gravar senha no Supabase:', upsertErr);
+        return {
+          success: false,
+          error: `Erro ao salvar senha no Supabase: ${upsertErr.message}. Certifique-se de que executou o script SQL das tabelas no Supabase.`,
+        };
+      }
+    }
+
+    // Atualiza estado local e sessão
     setUsers((prev) => {
-      const exists = prev.some((u) => u.id === updatedUser.id);
+      const exists = prev.some((u) => u.username.toLowerCase() === cleanUsername);
       if (exists) {
-        return prev.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+        return prev.map((u) => (u.username.toLowerCase() === cleanUsername ? updatedUser : u));
       }
       return [...prev, updatedUser];
     });
 
     setCurrentUser(updatedUser);
     localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(updatedUser));
-
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      await supabase.from('users').upsert(mapUserToDb(updatedUser));
-    }
+    localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify([...users.filter((u) => u.id !== updatedUser.id), updatedUser]));
 
     return { success: true };
   };
 
-  // Logout handler
+  // Logout
   const logout = () => {
     setCurrentUser(null);
     localStorage.removeItem(STORAGE_SESSION_KEY);
   };
 
-  // Create new user (by Superadmin or Admin)
+  // Criar novo usuário (Superadmin ou Admin)
   const createUser = async ({
     username,
     name,
@@ -265,7 +331,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const exists = users.some((u) => u.username.toLowerCase() === cleanUsername);
     if (exists) {
-      return { success: false, error: 'Este nome de usuário já está em uso.' };
+      return { success: false, error: 'Este nome de usuário já está cadastrado no sistema.' };
     }
 
     let passwordHash: string | undefined = undefined;
@@ -288,16 +354,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       updatedAt: new Date().toISOString(),
     };
 
-    setUsers((prev) => [...prev, newUser]);
     const supabase = getSupabaseClient();
     if (supabase) {
-      await supabase.from('users').insert(mapUserToDb(newUser));
+      const { error } = await supabase.from('users').insert(mapUserToDb(newUser));
+      if (error) {
+        return { success: false, error: `Erro no Supabase: ${error.message}` };
+      }
     }
 
+    setUsers((prev) => [...prev, newUser]);
     return { success: true };
   };
 
-  // Update existing user
+  // Atualizar usuário
   const updateUser = async (
     id: string,
     updates: Partial<AppUser>
@@ -305,128 +374,95 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const user = users.find((u) => u.id === id);
     if (!user) return { success: false, error: 'Usuário não encontrado.' };
 
-    // Prevent changing superadmin username or role
-    if (user.role === 'superadmin' && (updates.role && updates.role !== 'superadmin')) {
-      return { success: false, error: 'Não é permitido alterar o nível do superadmin.' };
-    }
-
     const updatedUser: AppUser = {
       ...user,
       ...updates,
       updatedAt: new Date().toISOString(),
     };
 
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      const { error } = await supabase
+        .from('users')
+        .update(mapUserToDb(updatedUser))
+        .eq('id', id);
+
+      if (error) {
+        return { success: false, error: `Erro ao atualizar no Supabase: ${error.message}` };
+      }
+    }
+
     setUsers((prev) => prev.map((u) => (u.id === id ? updatedUser : u)));
     if (currentUser?.id === id) {
       setCurrentUser(updatedUser);
       localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(updatedUser));
     }
 
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      await supabase.from('users').upsert(mapUserToDb(updatedUser));
-    }
-
     return { success: true };
   };
 
-  // Toggle user block / unblock
+  // Bloquear / Desbloquear usuário (Superadmin)
   const toggleBlockUser = async (id: string): Promise<{ success: boolean; error?: string }> => {
     const user = users.find((u) => u.id === id);
     if (!user) return { success: false, error: 'Usuário não encontrado.' };
 
-    // Superadmin cannot be blocked
-    if (user.role === 'superadmin') {
-      return { success: false, error: 'O Superadmin amaryel não pode ser bloqueado.' };
+    // Proteção absoluta: O superadmin amaryel NUNCA pode ser bloqueado
+    if (user.username.toLowerCase() === 'amaryel' || user.role === 'superadmin') {
+      return {
+        success: false,
+        error: 'O usuário superadmin (amaryel) possui proteção de segurança e não pode ser bloqueado.',
+      };
     }
 
     const newStatus: UserStatus = user.status === 'ativo' ? 'bloqueado' : 'ativo';
-    const updatedUser: AppUser = {
-      ...user,
-      status: newStatus,
-      updatedAt: new Date().toISOString(),
-    };
-
-    setUsers((prev) => prev.map((u) => (u.id === id ? updatedUser : u)));
-
-    // If currently logged in user is the one blocked, log them out
-    if (currentUser?.id === id && newStatus === 'bloqueado') {
-      setCurrentUser(null);
-      localStorage.removeItem(STORAGE_SESSION_KEY);
-    }
-
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      await supabase.from('users').update({ status: newStatus, updated_at: updatedUser.updatedAt }).eq('id', id);
-    }
-
-    return { success: true };
+    return updateUser(id, { status: newStatus });
   };
 
-  // Reset password for a user
+  // Redefinir senha de um usuário
   const resetUserPassword = async (
     id: string,
     newPassword: string
   ): Promise<{ success: boolean; error?: string }> => {
     if (!newPassword || newPassword.length < 4) {
-      return { success: false, error: 'A senha deve ter no mínimo 4 caracteres.' };
+      return { success: false, error: 'A nova senha deve ter no mínimo 4 caracteres.' };
     }
-
-    const user = users.find((u) => u.id === id);
-    if (!user) return { success: false, error: 'Usuário não encontrado.' };
 
     const passwordHash = await hashPassword(newPassword);
-    const updatedUser: AppUser = {
-      ...user,
+    return updateUser(id, {
       passwordHash,
       hasDefinedPassword: true,
-      updatedAt: new Date().toISOString(),
-    };
-
-    setUsers((prev) => prev.map((u) => (u.id === id ? updatedUser : u)));
-    if (currentUser?.id === id) {
-      setCurrentUser(updatedUser);
-      localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(updatedUser));
-    }
-
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      await supabase
-        .from('users')
-        .update({
-          password_hash: passwordHash,
-          has_defined_password: true,
-          updated_at: updatedUser.updatedAt,
-        })
-        .eq('id', id);
-    }
-
-    return { success: true };
+    });
   };
 
-  // Delete a user
+  // Excluir usuário
   const deleteUser = async (id: string): Promise<{ success: boolean; error?: string }> => {
     const user = users.find((u) => u.id === id);
     if (!user) return { success: false, error: 'Usuário não encontrado.' };
 
-    if (user.role === 'superadmin') {
+    // Proteção: O superadmin não pode ser excluído
+    if (user.username.toLowerCase() === 'amaryel' || user.role === 'superadmin') {
       return { success: false, error: 'O usuário superadmin principal não pode ser excluído.' };
     }
 
-    setUsers((prev) => prev.filter((u) => u.id !== id));
     const supabase = getSupabaseClient();
     if (supabase) {
-      await supabase.from('users').delete().eq('id', id);
+      const { error } = await supabase.from('users').delete().eq('id', id);
+      if (error) {
+        return { success: false, error: `Erro ao excluir no Supabase: ${error.message}` };
+      }
     }
 
+    setUsers((prev) => prev.filter((u) => u.id !== id));
     return { success: true };
   };
+
+  const isAuthenticated = Boolean(currentUser && currentUser.status === 'ativo');
 
   return (
     <AuthContext.Provider
       value={{
         currentUser,
-        isAuthenticated: Boolean(currentUser),
+        isAuthenticated,
         isLoading,
         users,
         login,
@@ -445,10 +481,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   );
 };
 
-export function useAuth() {
+export const useAuth = (): AuthContextType => {
   const context = useContext(AuthContext);
   if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
-}
+};
