@@ -86,16 +86,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(mappedUsers));
 
           // Se o usuário logado atualmente sofreu alteração no banco (ex: bloqueado por superadmin)
-          if (currentUser) {
-            const freshCurrentUser = mappedUsers.find((u) => u.id === currentUser.id);
-            if (freshCurrentUser) {
-              if (freshCurrentUser.status === 'bloqueado') {
-                setCurrentUser(null);
-                localStorage.removeItem(STORAGE_SESSION_KEY);
-              } else {
-                setCurrentUser(freshCurrentUser);
-                localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(freshCurrentUser));
+          const savedSession = localStorage.getItem(STORAGE_SESSION_KEY);
+          if (savedSession) {
+            try {
+              const parsedSession = JSON.parse(savedSession);
+              const freshCurrentUser = mappedUsers.find((u) => u.id === parsedSession.id);
+              if (freshCurrentUser) {
+                if (freshCurrentUser.status === 'bloqueado') {
+                  setCurrentUser(null);
+                  localStorage.removeItem(STORAGE_SESSION_KEY);
+                } else {
+                  setCurrentUser(freshCurrentUser);
+                  localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(freshCurrentUser));
+                }
               }
+            } catch {
+              // Ignore parse error
             }
           }
         } else {
@@ -111,7 +117,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (err) {
       console.error('Erro ao buscar usuários do Supabase:', err);
     }
-  }, [currentUser]);
+  }, []);
 
   // Carga inicial
   useEffect(() => {
@@ -310,7 +316,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Logout
   const logout = () => {
     setCurrentUser(null);
-    localStorage.removeItem(STORAGE_SESSION_KEY);
+    try {
+      localStorage.removeItem(STORAGE_SESSION_KEY);
+      localStorage.removeItem('erpglp_auth_session_v1');
+      sessionStorage.clear();
+    } catch (e) {
+      console.error('Error clearing session:', e);
+    }
   };
 
   // Criar novo usuário (Superadmin ou Admin)
