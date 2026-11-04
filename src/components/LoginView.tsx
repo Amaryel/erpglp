@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Flame, Lock, User, Eye, EyeOff, ArrowRight, AlertCircle, KeyRound, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { AppFooter } from './AppFooter';
 
 export const LoginView: React.FC = () => {
   const { login, sessionMessage } = useAuth();
@@ -49,9 +50,7 @@ export const LoginView: React.FC = () => {
       {/* Painel da marca (desktop) */}
       <aside className="hidden lg:flex flex-col justify-between bg-slate-950 text-white p-12 relative overflow-hidden">
         <div className="flex items-center gap-2.5">
-          <span className="w-9 h-9 rounded-lg bg-orange-600 flex items-center justify-center">
-            <Flame className="w-5 h-5" strokeWidth={2.2} />
-          </span>
+          <img src="/icons/icon.svg" alt="" aria-hidden="true" className="w-9 h-9 rounded-lg shrink-0" />
           <span className="text-lg font-bold tracking-tight">
             Erp<span className="text-orange-500">GLP</span>
           </span>
@@ -83,9 +82,7 @@ export const LoginView: React.FC = () => {
       {/* Formulário */}
       <main className="flex flex-col px-5 py-8 sm:px-10">
         <div className="lg:hidden flex items-center gap-2.5 mb-10">
-          <span className="w-9 h-9 rounded-lg bg-orange-600 text-white flex items-center justify-center">
-            <Flame className="w-5 h-5" strokeWidth={2.2} />
-          </span>
+          <img src="/icons/icon.svg" alt="" aria-hidden="true" className="w-9 h-9 rounded-lg shrink-0" />
           <span className="text-lg font-bold tracking-tight text-slate-900">
             Erp<span className="text-orange-600">GLP</span>
           </span>
@@ -181,10 +178,13 @@ export const LoginView: React.FC = () => {
           </p>
         </div>
 
-        <p className="mt-10 text-xs text-slate-400 flex items-center justify-center gap-1.5">
-          <ShieldCheck className="w-3.5 h-3.5" />
-          Conexão protegida
-        </p>
+        <div className="mt-10 space-y-2">
+          <p className="text-xs text-slate-400 flex items-center justify-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            Conexão protegida
+          </p>
+          <AppFooter />
+        </div>
       </main>
     </div>
   );

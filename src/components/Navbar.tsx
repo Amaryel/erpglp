@@ -238,9 +238,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="flex items-center gap-2.5 rounded-lg select-none"
               aria-label="Ir para o início"
             >
-              <span className="w-8 h-8 rounded-lg bg-orange-600 flex items-center justify-center text-white shrink-0">
-                <Flame className="w-[18px] h-[18px]" strokeWidth={2.2} />
-              </span>
+              <img src="/icons/icon.svg" alt="" aria-hidden="true" className="w-8 h-8 rounded-lg shrink-0" />
               <span className="text-[17px] font-bold tracking-tight text-slate-900">
                 Erp<span className="text-orange-600">GLP</span>
               </span>
@@ -345,9 +343,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       >
         <div className="lg:hidden flex items-center justify-between px-4 h-14 border-b border-white/10">
           <span className="flex items-center gap-2.5">
-            <span className="w-8 h-8 rounded-lg bg-orange-600 flex items-center justify-center text-white">
-              <Flame className="w-[18px] h-[18px]" strokeWidth={2.2} />
-            </span>
+            <img src="/icons/icon.svg" alt="" aria-hidden="true" className="w-8 h-8 rounded-lg shrink-0" />
             <span className="text-[17px] font-bold tracking-tight text-white">
               Erp<span className="text-orange-500">GLP</span>
             </span>

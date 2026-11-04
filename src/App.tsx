@@ -20,6 +20,7 @@ import { UsersManagementView } from './components/UsersManagementView';
 import { LoginView } from './components/LoginView';
 import { NewSaleModal } from './components/NewSaleModal';
 import { SupabaseModal } from './components/SupabaseModal';
+import { AppFooter } from './components/AppFooter';
 import { RefreshCw, ArrowLeft, ChevronRight, Home } from 'lucide-react';
 
 const ADMIN_TABS: ActiveTab[] = ['usuarios'];
@@ -108,7 +109,7 @@ const MainLayout: React.FC = () => {
           sidebarCollapsed ? 'lg:pl-[68px]' : 'lg:pl-60'
         }`}
       >
-        <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-28 lg:pb-10 min-w-0">
+        <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-6 min-w-0">
           {activeTab !== 'dashboard' && (
             <nav aria-label="Navegação da página" className="flex items-center gap-1 mb-2 -ml-2 text-sm">
               <button
@@ -172,6 +173,8 @@ const MainLayout: React.FC = () => {
 
           {activeTab === 'config' && <ConfigView />}
         </main>
+
+        <AppFooter className="border-t border-slate-200 mx-4 sm:mx-6 lg:mx-8 pt-4 pb-28 lg:pb-6" />
       </div>
 
       {/* Global New Sale Modal */}
