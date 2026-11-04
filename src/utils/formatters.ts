@@ -91,3 +91,31 @@ export function formatPaymentMethod(method: string | undefined): string {
       return method.charAt(0).toUpperCase() + method.slice(1);
   }
 }
+
+/**
+ * Aplica máscara dinâmica de telefone brasileiro (DDD + 8 ou 9 dígitos).
+ * Exemplo 11 dígitos: (89) 9 9999 - 9999
+ * Exemplo 10 dígitos: (89) 9999 - 9999
+ * Como o telefone é opcional, aceita string vazia.
+ */
+export function maskPhone(value: string | undefined | null): string {
+  if (!value) return '';
+  const digits = value.replace(/\D/g, '').slice(0, 11);
+  if (!digits) return '';
+
+  if (digits.length <= 2) {
+    return `(${digits}`;
+  }
+  if (digits.length <= 6) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  }
+  if (digits.length <= 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)} - ${digits.slice(6)}`;
+  }
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 3)} ${digits.slice(3, 7)} - ${digits.slice(7, 11)}`;
+}
+
+export function formatPhone(phone: string | undefined | null): string {
+  if (!phone) return '';
+  return maskPhone(phone);
+}

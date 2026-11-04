@@ -32,6 +32,18 @@ export const EMBEDDED_SUPABASE_ANON_KEY = 'sb_publishable_rkAdGls-vJtdoboVBSyu6Q
 
 const STORAGE_SUPABASE_KEY = 'erpglp_supabase_config_v1';
 
+// O Supabase Auth trabalha com e-mail; o operador digita apenas o nome de usuário.
+// Deve ser igual ao domínio usado em public.erp_login_email() no supabase/schema.sql.
+export const LOGIN_EMAIL_DOMAIN = 'erpglp.app';
+
+export function normalizeUsername(username: string): string {
+  return username.trim().toLowerCase();
+}
+
+export function usernameToLoginEmail(username: string): string {
+  return `${normalizeUsername(username)}@${LOGIN_EMAIL_DOMAIN}`;
+}
+
 export function getStoredSupabaseConfig(): SupabaseConfig {
   const metaEnv = (import.meta as any).env || {};
   const envUrl = (metaEnv.VITE_SUPABASE_URL as string) || '';
@@ -61,6 +73,30 @@ export function getStoredSupabaseConfig(): SupabaseConfig {
     anonKey: activeKey,
     isConfigured: Boolean(activeUrl && activeKey),
   };
+}
+
+/**
+ * Impede que uma chave secreta (service_role / sb_secret_) seja salva no navegador:
+ * ela ignora todas as regras de segurança do banco.
+ */
+export function getSupabaseKeyProblem(key: string): string | null {
+  const clean = key.trim();
+  if (!clean) return 'Informe a chave pública (anon / publishable) do Supabase.';
+  if (clean.startsWith('sb_secret_')) {
+    return 'Esta é uma chave SECRETA. Use apenas a chave pública (anon / publishable) no aplicativo.';
+  }
+  const parts = clean.split('.');
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (payload?.role === 'service_role') {
+        return 'Esta é a chave service_role (secreta). Use apenas a chave pública (anon) no aplicativo.';
+      }
+    } catch {
+      // Não é um JWT legível: segue para o teste de conexão
+    }
+  }
+  return null;
 }
 
 export function saveStoredSupabaseConfig(url: string, anonKey: string): void {
@@ -137,22 +173,31 @@ export async function testSupabaseConnection(
   const startTime = Date.now();
 
   try {
-    const tempClient = createClient(url, anonKey);
-    
-    // Check if we can query users or products table
-    const { data: userData, error: userError } = await tempClient
-      .from('users')
-      .select('id, username')
-      .limit(1);
+    // Usa o cliente autenticado quando o teste é da conexão atual (RLS exige login)
+    const isCurrent = url === config.url && anonKey === config.anonKey;
+    const testClient = isCurrent
+      ? getSupabaseClient() || createClient(url, anonKey, { auth: { persistSession: false } })
+      : createClient(url, anonKey, { auth: { persistSession: false } });
+
+    const { error: userError } = await testClient.from('app_settings').select('id').limit(1);
 
     const latencyMs = Date.now() - startTime;
+
+    // Sem login, o banco protegido recusa a leitura: isso confirma que a URL/chave são válidas
+    if (userError && (userError.code === '42501' || /permission denied/i.test(userError.message))) {
+      return {
+        success: true,
+        message: 'Conexão estabelecida. O banco está protegido: os dados só são liberados após o login.',
+        latencyMs,
+      };
+    }
 
     if (userError) {
       // If table does not exist
       if (userError.code === '42P01' || userError.message.includes('relation') || userError.message.includes('does not exist')) {
         return {
           success: false,
-          message: 'Conectado ao Supabase! Porém a tabela "users" ainda não foi criada. Execute o script SQL no SQL Editor do Supabase.',
+          message: 'Conectado ao Supabase! Porém as tabelas ainda não foram criadas. Execute o script SQL no SQL Editor do Supabase.',
           latencyMs,
         };
       }
@@ -184,11 +229,21 @@ export async function testSupabaseConnection(
   }
 }
 
-// Complete SQL Schema script for the user to execute in Supabase SQL Editor
+// Script SQL completo e seguro (tabelas + RLS + funções de usuário), exibido no painel
+// para o Superadmin copiar. Mantenha igual ao arquivo supabase/schema.sql.
 export const SUPABASE_SCHEMA_SQL = `-- ==============================================================================
--- ERP GLP - SCRIPT SQL COMPLETO PARA O SUPABASE (BANCO DE DADOS ONLINE)
--- Execute este script no "SQL Editor" do seu projeto Supabase para criar as tabelas,
--- índices, políticas de segurança e habilitar o Realtime multi-dispositivos.
+-- ERP GLP - SCRIPT SQL COMPLETO E SEGURO PARA O SUPABASE
+-- Execute no "SQL Editor" do Supabase. É idempotente: pode rodar em um banco novo
+-- ou em um banco que já usa a versão antiga (ele migra e fecha o acesso público).
+--
+-- Modelo de segurança:
+--   * Login feito pelo Supabase Auth (senha com bcrypt no servidor).
+--   * A chave pública (anon/publishable) NÃO lê nem grava nenhuma tabela.
+--   * Só usuários ativos e autenticados acessam os dados (RLS).
+--   * Gestão de usuários apenas via funções no servidor, com regras por perfil.
+--
+-- DEPOIS DE EXECUTAR, defina a senha do superadmin (troque a senha abaixo):
+--   SELECT public.erp_bootstrap_superadmin('amaryel', 'Amaryel Costa (Superadmin)', 'SUA-SENHA-FORTE-AQUI');
 -- ==============================================================================
 
 -- 1. Tabela de Configurações da Empresa
@@ -466,7 +521,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   name TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'operador',
   status TEXT NOT NULL DEFAULT 'ativo',
-  password_hash TEXT,
+  auth_user_id UUID UNIQUE REFERENCES auth.users(id) ON DELETE SET NULL,
   has_defined_password BOOLEAN DEFAULT false,
   last_login_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -474,70 +529,459 @@ CREATE TABLE IF NOT EXISTS public.users (
 );
 
 -- ==============================================================================
--- PERMISSÕES E ROW LEVEL SECURITY (RLS)
--- Permite leitura e escrita completa para a aplicação funcionar em tempo real
+-- 19. MIGRAÇÃO DE BANCOS ANTIGOS
 -- ==============================================================================
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS auth_user_id UUID UNIQUE REFERENCES auth.users(id) ON DELETE SET NULL;
+
+-- Os hashes antigos (SHA-256 gerado no navegador, sal fixo) estavam expostos publicamente
+-- e não são compatíveis com o Supabase Auth: são apagados e a senha precisa ser redefinida.
+ALTER TABLE public.users DROP COLUMN IF EXISTS password_hash;
+UPDATE public.users SET has_defined_password = false WHERE auth_user_id IS NULL;
+
+ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE public.users ADD CONSTRAINT users_role_check
+  CHECK (role IN ('superadmin', 'admin', 'operador', 'entregador')) NOT VALID;
+ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_status_check;
+ALTER TABLE public.users ADD CONSTRAINT users_status_check
+  CHECK (status IN ('ativo', 'bloqueado')) NOT VALID;
+ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_username_check;
+ALTER TABLE public.users ADD CONSTRAINT users_username_check
+  CHECK (username ~ '^[a-z0-9._-]{3,32}$') NOT VALID;
+
+-- Rastreabilidade: quem gerou cada registro de auditoria (preenchido pelo servidor)
+ALTER TABLE public.audit_logs ADD COLUMN IF NOT EXISTS created_by UUID DEFAULT auth.uid();
+
+-- ==============================================================================
+-- 20. FUNÇÕES DE AUTORIZAÇÃO (usadas pelas políticas RLS)
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.erp_current_role()
+RETURNS TEXT
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+AS $$
+  SELECT u.role FROM public.users u
+  WHERE u.auth_user_id = auth.uid() AND u.status = 'ativo'
+  LIMIT 1
+$$;
+
+CREATE OR REPLACE FUNCTION public.erp_is_active()
+RETURNS BOOLEAN
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+AS $$ SELECT public.erp_current_role() IS NOT NULL $$;
+
+CREATE OR REPLACE FUNCTION public.erp_is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+AS $$ SELECT COALESCE(public.erp_current_role() IN ('admin', 'superadmin'), false) $$;
+
+CREATE OR REPLACE FUNCTION public.erp_is_superadmin()
+RETURNS BOOLEAN
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+AS $$ SELECT COALESCE(public.erp_current_role() = 'superadmin', false) $$;
+
+-- E-mail técnico usado pelo Supabase Auth (o usuário digita apenas o nome de usuário).
+-- Deve ser igual ao LOGIN_EMAIL_DOMAIN em src/lib/supabase.ts
+CREATE OR REPLACE FUNCTION public.erp_login_email(p_username TEXT)
+RETURNS TEXT
+LANGUAGE sql IMMUTABLE SET search_path = ''
+AS $$ SELECT lower(trim(p_username)) || '@erpglp.app' $$;
+
+-- ==============================================================================
+-- 21. FUNÇÃO INTERNA: cria/atualiza a credencial no Supabase Auth (bcrypt)
+-- Não pode ser chamada pelo app diretamente.
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.erp__set_auth_password(p_user_id TEXT, p_password TEXT)
+RETURNS UUID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+DECLARE
+  v_user public.users%ROWTYPE;
+  v_auth UUID;
+  v_email TEXT;
+BEGIN
+  SELECT * INTO v_user FROM public.users WHERE id = p_user_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Usuário não encontrado.' USING ERRCODE = 'P0002';
+  END IF;
+  IF p_password IS NULL OR length(p_password) < 8 THEN
+    RAISE EXCEPTION 'A senha deve ter no mínimo 8 caracteres.' USING ERRCODE = '22023';
+  END IF;
+
+  v_email := public.erp_login_email(v_user.username);
+
+  v_auth := v_user.auth_user_id;
+  IF v_auth IS NULL OR NOT EXISTS (SELECT 1 FROM auth.users WHERE id = v_auth) THEN
+    SELECT id INTO v_auth FROM auth.users WHERE email = v_email LIMIT 1;
+  END IF;
+
+  IF v_auth IS NOT NULL THEN
+    UPDATE auth.users
+       SET encrypted_password = extensions.crypt(p_password, extensions.gen_salt('bf')),
+           email = v_email,
+           email_confirmed_at = COALESCE(email_confirmed_at, now()),
+           banned_until = NULL,
+           updated_at = now()
+     WHERE id = v_auth;
+    -- Encerra sessões abertas com a senha anterior
+    DELETE FROM auth.sessions WHERE user_id = v_auth;
+  ELSE
+    v_auth := gen_random_uuid();
+    INSERT INTO auth.users (
+      instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+      raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+      confirmation_token, recovery_token, email_change_token_new, email_change
+    ) VALUES (
+      '00000000-0000-0000-0000-000000000000', v_auth, 'authenticated', 'authenticated',
+      v_email, extensions.crypt(p_password, extensions.gen_salt('bf')), now(),
+      '{"provider":"email","providers":["email"]}'::jsonb,
+      jsonb_build_object('username', v_user.username, 'name', v_user.name),
+      now(), now(), '', '', '', ''
+    );
+    INSERT INTO auth.identities (
+      id, user_id, provider_id, provider, identity_data, last_sign_in_at, created_at, updated_at
+    ) VALUES (
+      gen_random_uuid(), v_auth, v_auth::text, 'email',
+      jsonb_build_object('sub', v_auth::text, 'email', v_email, 'email_verified', true),
+      now(), now(), now()
+    );
+  END IF;
+
+  UPDATE public.users
+     SET auth_user_id = v_auth, has_defined_password = true, updated_at = now()
+   WHERE id = p_user_id;
+
+  RETURN v_auth;
+END;
+$$;
+
+-- ==============================================================================
+-- 22. FUNÇÕES CHAMADAS PELO APP (cada uma valida o perfil de quem chama)
+-- ==============================================================================
+
+-- Perfil do usuário logado (inclusive se estiver bloqueado, para exibir a mensagem correta)
+CREATE OR REPLACE FUNCTION public.erp_me()
+RETURNS JSONB
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+AS $$
+  SELECT to_jsonb(u) FROM public.users u WHERE u.auth_user_id = auth.uid() LIMIT 1
+$$;
+
+CREATE OR REPLACE FUNCTION public.erp_touch_login()
+RETURNS VOID
+LANGUAGE sql SECURITY DEFINER SET search_path = ''
+AS $$
+  UPDATE public.users SET last_login_at = now()
+  WHERE auth_user_id = auth.uid() AND status = 'ativo'
+$$;
+
+CREATE OR REPLACE FUNCTION public.erp_admin_create_user(
+  p_username TEXT, p_name TEXT, p_role TEXT, p_password TEXT
+)
+RETURNS TEXT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+DECLARE
+  v_caller TEXT := public.erp_current_role();
+  v_username TEXT := lower(trim(COALESCE(p_username, '')));
+  v_name TEXT := trim(COALESCE(p_name, ''));
+  v_id TEXT;
+BEGIN
+  IF v_caller IS NULL OR v_caller NOT IN ('admin', 'superadmin') THEN
+    RAISE EXCEPTION 'Acesso negado: apenas administradores podem cadastrar usuários.' USING ERRCODE = '42501';
+  END IF;
+  IF p_role IS NULL OR p_role NOT IN ('superadmin', 'admin', 'operador', 'entregador') THEN
+    RAISE EXCEPTION 'Nível de acesso inválido.' USING ERRCODE = '22023';
+  END IF;
+  IF p_role = 'superadmin' AND v_caller <> 'superadmin' THEN
+    RAISE EXCEPTION 'Apenas o Superadmin pode criar usuários Superadmin.' USING ERRCODE = '42501';
+  END IF;
+  IF v_username !~ '^[a-z0-9._-]{3,32}$' THEN
+    RAISE EXCEPTION 'Usuário inválido: use de 3 a 32 caracteres (letras minúsculas, números, ponto, hífen ou sublinhado).' USING ERRCODE = '22023';
+  END IF;
+  IF v_name = '' THEN
+    RAISE EXCEPTION 'Informe o nome completo.' USING ERRCODE = '22023';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.users WHERE username = v_username) THEN
+    RAISE EXCEPTION 'Este nome de usuário já está cadastrado.' USING ERRCODE = '23505';
+  END IF;
+  IF p_password IS NULL OR length(p_password) < 8 THEN
+    RAISE EXCEPTION 'A senha deve ter no mínimo 8 caracteres.' USING ERRCODE = '22023';
+  END IF;
+
+  v_id := 'usr-' || replace(gen_random_uuid()::text, '-', '');
+  INSERT INTO public.users (id, username, name, role, status, has_defined_password, created_at, updated_at)
+  VALUES (v_id, v_username, v_name, p_role, 'ativo', false, now(), now());
+
+  PERFORM public.erp__set_auth_password(v_id, p_password);
+  RETURN v_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.erp_admin_update_user(p_id TEXT, p_name TEXT, p_role TEXT)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+DECLARE
+  v_caller TEXT := public.erp_current_role();
+  v_target public.users%ROWTYPE;
+  v_name TEXT := trim(COALESCE(p_name, ''));
+BEGIN
+  IF v_caller IS NULL OR v_caller NOT IN ('admin', 'superadmin') THEN
+    RAISE EXCEPTION 'Acesso negado.' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO v_target FROM public.users WHERE id = p_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Usuário não encontrado.' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_target.role = 'superadmin' AND v_caller <> 'superadmin' THEN
+    RAISE EXCEPTION 'Acesso negado: apenas o Superadmin pode alterar um Superadmin.' USING ERRCODE = '42501';
+  END IF;
+  IF p_role IS NULL OR p_role NOT IN ('superadmin', 'admin', 'operador', 'entregador') THEN
+    RAISE EXCEPTION 'Nível de acesso inválido.' USING ERRCODE = '22023';
+  END IF;
+  IF p_role = 'superadmin' AND v_caller <> 'superadmin' THEN
+    RAISE EXCEPTION 'Acesso negado: apenas o Superadmin pode conceder o cargo de Superadmin.' USING ERRCODE = '42501';
+  END IF;
+  IF v_target.auth_user_id = auth.uid() AND p_role <> v_target.role THEN
+    RAISE EXCEPTION 'Você não pode alterar o seu próprio nível de acesso.' USING ERRCODE = '42501';
+  END IF;
+  IF v_name = '' THEN
+    RAISE EXCEPTION 'Informe o nome completo.' USING ERRCODE = '22023';
+  END IF;
+
+  UPDATE public.users SET name = v_name, role = p_role, updated_at = now() WHERE id = p_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.erp_admin_set_status(p_id TEXT, p_status TEXT)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+DECLARE
+  v_target public.users%ROWTYPE;
+BEGIN
+  IF NOT public.erp_is_superadmin() THEN
+    RAISE EXCEPTION 'Apenas o Superadmin pode bloquear ou desbloquear usuários.' USING ERRCODE = '42501';
+  END IF;
+  IF p_status NOT IN ('ativo', 'bloqueado') THEN
+    RAISE EXCEPTION 'Status inválido.' USING ERRCODE = '22023';
+  END IF;
+  SELECT * INTO v_target FROM public.users WHERE id = p_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Usuário não encontrado.' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_target.role = 'superadmin' THEN
+    RAISE EXCEPTION 'Usuários Superadmin não podem ser bloqueados.' USING ERRCODE = '42501';
+  END IF;
+
+  UPDATE public.users SET status = p_status, updated_at = now() WHERE id = p_id;
+  IF p_status = 'bloqueado' AND v_target.auth_user_id IS NOT NULL THEN
+    DELETE FROM auth.sessions WHERE user_id = v_target.auth_user_id;
+  END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.erp_admin_set_password(p_id TEXT, p_password TEXT)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+DECLARE
+  v_caller TEXT := public.erp_current_role();
+  v_target public.users%ROWTYPE;
+BEGIN
+  IF v_caller IS NULL OR v_caller NOT IN ('admin', 'superadmin') THEN
+    RAISE EXCEPTION 'Acesso negado.' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO v_target FROM public.users WHERE id = p_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Usuário não encontrado.' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_target.role = 'superadmin' AND v_caller <> 'superadmin' THEN
+    RAISE EXCEPTION 'Acesso negado: apenas o Superadmin pode redefinir a senha de um Superadmin.' USING ERRCODE = '42501';
+  END IF;
+  PERFORM public.erp__set_auth_password(p_id, p_password);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.erp_admin_delete_user(p_id TEXT)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+DECLARE
+  v_target public.users%ROWTYPE;
+BEGIN
+  IF NOT public.erp_is_superadmin() THEN
+    RAISE EXCEPTION 'Apenas o Superadmin pode excluir usuários.' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO v_target FROM public.users WHERE id = p_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Usuário não encontrado.' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_target.role = 'superadmin' THEN
+    RAISE EXCEPTION 'Usuários Superadmin não podem ser excluídos.' USING ERRCODE = '42501';
+  END IF;
+
+  DELETE FROM public.users WHERE id = p_id;
+  IF v_target.auth_user_id IS NOT NULL THEN
+    DELETE FROM auth.users WHERE id = v_target.auth_user_id;
+  END IF;
+END;
+$$;
+
+-- Executada somente no SQL Editor (dono do banco) para criar/recuperar o Superadmin
+CREATE OR REPLACE FUNCTION public.erp_bootstrap_superadmin(p_username TEXT, p_name TEXT, p_password TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+DECLARE
+  v_username TEXT := lower(trim(p_username));
+  v_id TEXT;
+BEGIN
+  IF p_password IS NULL OR length(p_password) < 10 THEN
+    RAISE EXCEPTION 'Use uma senha de no mínimo 10 caracteres para o Superadmin.' USING ERRCODE = '22023';
+  END IF;
+  IF lower(p_password) LIKE '%sua-senha%' THEN
+    RAISE EXCEPTION 'Troque a senha de exemplo por uma senha sua.' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT id INTO v_id FROM public.users WHERE username = v_username;
+  IF v_id IS NULL THEN
+    v_id := 'usr-' || replace(gen_random_uuid()::text, '-', '');
+    INSERT INTO public.users (id, username, name, role, status, has_defined_password)
+    VALUES (v_id, v_username, trim(p_name), 'superadmin', 'ativo', false);
+  ELSE
+    UPDATE public.users SET role = 'superadmin', status = 'ativo', updated_at = now() WHERE id = v_id;
+  END IF;
+
+  PERFORM public.erp__set_auth_password(v_id, p_password);
+  RETURN v_id;
+END;
+$$;
+
+-- Permissões de execução das funções
+REVOKE ALL ON FUNCTION public.erp_current_role() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_is_active() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_is_admin() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_is_superadmin() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_me() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_touch_login() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_admin_create_user(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_admin_update_user(TEXT, TEXT, TEXT) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_admin_set_status(TEXT, TEXT) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_admin_set_password(TEXT, TEXT) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_admin_delete_user(TEXT) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp__set_auth_password(TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.erp_bootstrap_superadmin(TEXT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+
+GRANT EXECUTE ON FUNCTION public.erp_current_role() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_is_active() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_is_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_is_superadmin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_me() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_touch_login() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_admin_create_user(TEXT, TEXT, TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_admin_update_user(TEXT, TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_admin_set_status(TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_admin_set_password(TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_admin_delete_user(TEXT) TO authenticated;
+
+-- ==============================================================================
+-- 23. PERMISSÕES DAS TABELAS + ROW LEVEL SECURITY
+-- ==============================================================================
+-- Remove o acesso total concedido pela versão antiga (inclusive TRUNCATE, que ignora RLS)
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon;
+
 DO $$
 DECLARE
-  tbl text;
-  tables text[] := ARRAY[
+  tbl TEXT;
+  pol RECORD;
+  all_tables TEXT[] := ARRAY[
     'app_settings', 'products', 'stock', 'stock_movements', 'stock_adjustments',
     'clients', 'delivery_persons', 'suppliers', 'sales', 'receivables',
     'cash_registers', 'cash_movements', 'expenses', 'payables', 'audit_logs',
     'stock_conferences', 'cash_conferences', 'users'
   ];
+  -- Operação do dia a dia: qualquer usuário ativo lê, cria, altera e exclui
+  daily_tables TEXT[] := ARRAY['products', 'stock', 'expenses', 'payables', 'cash_movements'];
+  -- Cadastros: usuário ativo cria/altera; exclusão só administradores
+  admin_delete_tables TEXT[] := ARRAY['clients', 'delivery_persons', 'suppliers'];
+  -- Histórico financeiro/estoque: usuário ativo cria/altera; exclusão só Superadmin
+  super_delete_tables TEXT[] := ARRAY[
+    'sales', 'receivables', 'cash_registers', 'stock_movements', 'stock_adjustments',
+    'stock_conferences', 'cash_conferences'
+  ];
 BEGIN
-  FOREACH tbl IN ARRAY tables
-  LOOP
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
-    EXECUTE format('DROP POLICY IF EXISTS "Public full access on %I" ON public.%I;', tbl, tbl);
-    EXECUTE format('CREATE POLICY "Public full access on %I" ON public.%I FOR ALL USING (true) WITH CHECK (true);', tbl, tbl);
+  FOREACH tbl IN ARRAY all_tables LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
+    FOR pol IN SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = tbl LOOP
+      EXECUTE format('DROP POLICY %I ON public.%I', pol.policyname, tbl);
+    END LOOP;
+  END LOOP;
+
+  FOREACH tbl IN ARRAY daily_tables || admin_delete_tables || super_delete_tables LOOP
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO authenticated', tbl);
+    EXECUTE format('CREATE POLICY erp_select ON public.%I FOR SELECT TO authenticated USING ((SELECT public.erp_is_active()))', tbl);
+    EXECUTE format('CREATE POLICY erp_insert ON public.%I FOR INSERT TO authenticated WITH CHECK ((SELECT public.erp_is_active()))', tbl);
+    EXECUTE format('CREATE POLICY erp_update ON public.%I FOR UPDATE TO authenticated USING ((SELECT public.erp_is_active())) WITH CHECK ((SELECT public.erp_is_active()))', tbl);
+  END LOOP;
+
+  FOREACH tbl IN ARRAY daily_tables LOOP
+    EXECUTE format('CREATE POLICY erp_delete ON public.%I FOR DELETE TO authenticated USING ((SELECT public.erp_is_active()))', tbl);
+  END LOOP;
+  FOREACH tbl IN ARRAY admin_delete_tables LOOP
+    EXECUTE format('CREATE POLICY erp_delete ON public.%I FOR DELETE TO authenticated USING ((SELECT public.erp_is_admin()))', tbl);
+  END LOOP;
+  FOREACH tbl IN ARRAY super_delete_tables LOOP
+    EXECUTE format('CREATE POLICY erp_delete ON public.%I FOR DELETE TO authenticated USING ((SELECT public.erp_is_superadmin()))', tbl);
   END LOOP;
 END $$;
 
--- Concede permissões ao esquema public para anon e authenticated
-GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role, postgres;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role, postgres;
+-- Configurações da empresa (inclui chave PIX): todos leem, só administradores alteram
+GRANT SELECT, INSERT, UPDATE ON public.app_settings TO authenticated;
+CREATE POLICY erp_select ON public.app_settings FOR SELECT TO authenticated
+  USING ((SELECT public.erp_is_active()));
+CREATE POLICY erp_insert ON public.app_settings FOR INSERT TO authenticated
+  WITH CHECK ((SELECT public.erp_is_admin()));
+CREATE POLICY erp_update ON public.app_settings FOR UPDATE TO authenticated
+  USING ((SELECT public.erp_is_admin())) WITH CHECK ((SELECT public.erp_is_admin()));
+
+-- Auditoria: registro só de inclusão; apenas o Superadmin altera/exclui (restauração de backup)
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.audit_logs TO authenticated;
+CREATE POLICY erp_select ON public.audit_logs FOR SELECT TO authenticated
+  USING ((SELECT public.erp_is_active()));
+CREATE POLICY erp_insert ON public.audit_logs FOR INSERT TO authenticated
+  WITH CHECK ((SELECT public.erp_is_active()));
+CREATE POLICY erp_update ON public.audit_logs FOR UPDATE TO authenticated
+  USING ((SELECT public.erp_is_superadmin())) WITH CHECK ((SELECT public.erp_is_superadmin()));
+CREATE POLICY erp_delete ON public.audit_logs FOR DELETE TO authenticated
+  USING ((SELECT public.erp_is_superadmin()));
+
+-- Usuários: leitura para usuários ativos; alterações somente pelas funções erp_admin_*
+GRANT SELECT ON public.users TO authenticated;
+CREATE POLICY erp_select ON public.users FOR SELECT TO authenticated
+  USING ((SELECT public.erp_is_active()));
 
 -- ==============================================================================
--- REALTIME MULTI-DISPOSITIVOS
--- Habilita escuta em tempo real para sincronização instantânea entre celulares e computadores
+-- 24. REALTIME MULTI-DISPOSITIVOS (respeita as políticas RLS acima)
 -- ==============================================================================
 DO $$
 BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE 
-    public.app_settings,
-    public.products,
-    public.stock,
-    public.stock_movements,
-    public.stock_adjustments,
-    public.clients,
-    public.delivery_persons,
-    public.suppliers,
-    public.sales,
-    public.receivables,
-    public.cash_registers,
-    public.cash_movements,
-    public.expenses,
-    public.payables,
-    public.audit_logs,
-    public.stock_conferences,
-    public.cash_conferences,
-    public.users;
+  ALTER PUBLICATION supabase_realtime ADD TABLE
+    public.app_settings, public.products, public.stock, public.stock_movements,
+    public.stock_adjustments, public.clients, public.delivery_persons, public.suppliers,
+    public.sales, public.receivables, public.cash_registers, public.cash_movements,
+    public.expenses, public.payables, public.audit_logs, public.stock_conferences,
+    public.cash_conferences, public.users;
 EXCEPTION
-  WHEN duplicate_object THEN
-    NULL;
+  WHEN duplicate_object OR undefined_object THEN NULL;
 END $$;
 
--- Inserir configurações padrão se não existirem
-INSERT INTO public.app_settings (id, company_name, trading_name, cnpj, phone, address, neighborhood, city, pix_key, default_min_stock, delivery_fee, delivery_time_minutes, receipt_footer_message)
-VALUES ('default', 'ErpGLP Distribuidora e Revenda de Gás Ltda', 'ErpGLP Gás & Água', '12.345.678/0001-90', '(11) 98765-4321', 'Av. das Nações, 1500', 'Centro', 'São Paulo - SP', 'financeiro@erpglp.com.br', 20, 0, 30, 'Agradecemos a sua preferência! ErpGLP - Qualidade, Segurança e Rapidez.')
-ON CONFLICT (id) DO NOTHING;
-
--- Inserir usuário superadmin amaryel padrão se não existir (preserva senha caso já exista)
-INSERT INTO public.users (id, username, name, role, status, has_defined_password)
-VALUES ('usr-superadmin-01', 'amaryel', 'Amaryel Costa (Superadmin)', 'superadmin', 'ativo', false)
-ON CONFLICT (username) DO NOTHING;
+-- ==============================================================================
+-- 25. DADOS INICIAIS
+-- ==============================================================================
+INSERT INTO public.app_settings (id) VALUES ('default') ON CONFLICT (id) DO NOTHING;
 `;
 
 // Helper conversion functions
@@ -1087,25 +1531,9 @@ export function mapDbUser(row: any): AppUser {
     name: row.name,
     role: row.role || 'operador',
     status: row.status || 'ativo',
-    passwordHash: row.password_hash || undefined,
     hasDefinedPassword: Boolean(row.has_defined_password),
     lastLoginAt: row.last_login_at || undefined,
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || undefined,
-  };
-}
-
-export function mapUserToDb(user: AppUser): any {
-  return {
-    id: user.id,
-    username: user.username.trim().toLowerCase(),
-    name: user.name,
-    role: user.role,
-    status: user.status,
-    password_hash: user.passwordHash || null,
-    has_defined_password: Boolean(user.hasDefinedPassword),
-    last_login_at: user.lastLoginAt || null,
-    created_at: user.createdAt,
-    updated_at: user.updatedAt || new Date().toISOString(),
   };
 }

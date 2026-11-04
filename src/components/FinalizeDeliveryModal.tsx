@@ -5,16 +5,16 @@ import {
   Package,
   Plus,
   Minus,
-  Trash2,
   AlertCircle,
   Clock,
   User,
   MapPin,
-  Flame,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
-import { Sale, PaymentMethod, PaymentSplit } from '../types';
+import { Sale, PaymentSplit } from '../types';
 import { formatCurrency, formatTime, getElapsedTime } from '../utils/formatters';
+import { summarizePayments } from '../lib/payments';
+import { PaymentSplitEditor } from './PaymentSplitEditor';
 
 interface FinalizeDeliveryModalProps {
   sale: Sale | null;
@@ -22,78 +22,59 @@ interface FinalizeDeliveryModalProps {
   onClose: () => void;
 }
 
-export const FinalizeDeliveryModal: React.FC<FinalizeDeliveryModalProps> = ({
-  sale,
-  isOpen,
-  onClose,
-}) => {
+export const FinalizeDeliveryModal: React.FC<FinalizeDeliveryModalProps> = ({ sale, isOpen, onClose }) => {
+  if (!isOpen || !sale) return null;
+  // Conteúdo separado: os estados reiniciam a cada venda aberta (e respeitam a ordem dos hooks)
+  return <FinalizeDeliveryContent key={sale.id} sale={sale} onClose={onClose} />;
+};
+
+const FinalizeDeliveryContent: React.FC<{ sale: Sale; onClose: () => void }> = ({ sale, onClose }) => {
   const { finalizeDelivery, clients } = useErp();
 
-  if (!isOpen || !sale) return null;
+  const cylinderItems = sale.items.filter((i) => i.isCylinder);
 
-  // Default returned cylinders equal to cylinder quantity dispatched
-  const defaultReturned = sale.dispatchedCylinders > 0 ? sale.dispatchedCylinders : 0;
-  const [returnedCylinders, setReturnedCylinders] = useState<number>(defaultReturned);
+  // Padrão: troca completa (cada botijão entregue volta um vazio)
+  const [returnedByProduct, setReturnedByProduct] = useState<Record<string, number>>(() =>
+    Object.fromEntries(cylinderItems.map((i): [string, number] => [i.productId, i.quantity]))
+  );
 
-  // Default payment split pre-filled with total amount or sale payments
-  const initialPayments: PaymentSplit[] =
+  // Começa com a forma combinada na criação da entrega
+  const [payments, setPayments] = useState<PaymentSplit[]>(() =>
     sale.payments && sale.payments.length > 0
-      ? sale.payments
-      : [{ method: 'dinheiro', amount: sale.totalAmount }];
-
-  const [payments, setPayments] = useState<PaymentSplit[]>(initialPayments);
+      ? sale.payments.map((p) => ({ ...p }))
+      : [{ method: 'dinheiro', amount: sale.totalAmount }]
+  );
   const [selectedClientId, setSelectedClientId] = useState<string>(sale.clientId || '');
   const [notes, setNotes] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Calculations
-  const totalPaid = payments
-    .filter((p) => p.method !== 'fiado')
-    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-  const fiadoPart = payments.find((p) => p.method === 'fiado')?.amount || 0;
-  const totalCovered = totalPaid + fiadoPart;
-  const remaining = sale.totalAmount - totalCovered;
+  const summary = summarizePayments(payments, sale.totalAmount);
+  const totalReturned = cylinderItems.reduce((sum, i) => sum + (returnedByProduct[i.productId] ?? 0), 0);
+  const missingCylinders = Math.max(0, sale.dispatchedCylinders - totalReturned);
+  const needsClient = summary.fiado > 0 && !selectedClientId;
 
-  const handleAddPaymentRow = () => {
-    setPayments((prev) => [
-      ...prev,
-      { method: 'pix', amount: Math.max(0, remaining) },
-    ]);
-  };
-
-  const handleRemovePaymentRow = (index: number) => {
-    setPayments((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handlePaymentChange = (index: number, field: 'method' | 'amount', val: any) => {
-    setPayments((prev) =>
-      prev.map((p, i) => (i === index ? { ...p, [field]: val } : p))
-    );
-  };
-
-  const handleQuickPayMethod = (method: PaymentMethod) => {
-    setPayments([{ method, amount: sale.totalAmount }]);
-  };
+  const changeReturned = (productId: string, value: number) =>
+    setReturnedByProduct((prev) => ({ ...prev, [productId]: Math.max(0, value) }));
 
   const handleSubmit = () => {
     setErrorMessage(null);
 
-    if (Math.abs(remaining) > 0.05) {
+    if (!summary.isBalanced) {
       setErrorMessage(
-        `O total informado (R$ ${totalCovered.toFixed(2)}) não confere com o valor da venda (R$ ${sale.totalAmount.toFixed(2)}). Corrija antes de finalizar.`
+        summary.remaining > 0
+          ? `Faltam ${formatCurrency(summary.remaining)} para fechar o pagamento.`
+          : `O pagamento passa ${formatCurrency(-summary.remaining)} do valor da venda.`
       );
       return;
     }
-
-    if (fiadoPart > 0 && !selectedClientId && !sale.clientId) {
-      setErrorMessage(
-        'Para pagamento em FIADO (Contas a Receber), é obrigatório selecionar um cliente cadastrado.'
-      );
+    if (needsClient) {
+      setErrorMessage('Para lançar FIADO (Contas a Receber), selecione o cliente.');
       return;
     }
 
     const res = finalizeDelivery(sale.id, {
-      returnedCylinders,
+      returnedCylinders: totalReturned,
+      returnedByProduct,
       payments,
       clientId: selectedClientId || sale.clientId,
       notes: notes.trim() || undefined,
@@ -159,220 +140,110 @@ export const FinalizeDeliveryModal: React.FC<FinalizeDeliveryModalProps> = ({
             </div>
           </div>
 
-          {/* STEP 1: Vasilhames Retornados (Vazios) */}
-          <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3.5 space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-amber-950 uppercase tracking-wider flex items-center gap-1.5">
-                <Package className="w-4 h-4 text-amber-600" />
-                <span>1. Vasilhames Retornados (Vazios)</span>
-              </label>
-              <span className="text-[11px] text-amber-800 bg-amber-200/60 px-2 py-0.5 rounded-full font-semibold">
-                Saíram: {sale.dispatchedCylinders} cheios
-              </span>
-            </div>
-
-            <p className="text-xs text-slate-600">
-              Informe quantos vasilhames vazios o cliente entregou de volta ao motorista.
-            </p>
-
-            <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-amber-300">
-              <span className="text-xs font-semibold text-slate-700">
-                Quantidade de vazios que retornaram:
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setReturnedCylinders(Math.max(0, returnedCylinders - 1))}
-                  className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-700 active:scale-95 font-bold"
-                >
-                  <Minus className="w-4 h-4" />
-                </button>
-                <input
-                  type="number"
-                  min="0"
-                  value={returnedCylinders}
-                  onChange={(e) =>
-                    setReturnedCylinders(Math.max(0, parseInt(e.target.value) || 0))
-                  }
-                  className="w-14 text-center text-lg font-black text-slate-900 border rounded-lg py-1 focus:ring-1 focus:ring-amber-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => setReturnedCylinders(returnedCylinders + 1)}
-                  className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-700 active:scale-95 font-bold"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {returnedCylinders < sale.dispatchedCylinders && (
-              <div className="text-[11px] text-amber-800 bg-amber-100/70 p-2 rounded-lg flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-700" />
-                <span>
-                  Atenção: Cliente devolveu menos vasilhames do que os {sale.dispatchedCylinders} entregues. Isto será registrado na auditoria.
+          {/* STEP 1: Vasilhames vazios devolvidos, por produto */}
+          {cylinderItems.length > 0 && (
+            <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-xs font-bold text-amber-950 uppercase tracking-wider flex items-center gap-1.5">
+                  <Package className="w-4 h-4 text-amber-600" />
+                  <span>1. Vasilhames devolvidos</span>
+                </label>
+                <span className="text-[11px] text-amber-800 bg-amber-200/60 px-2 py-0.5 rounded-full font-semibold">
+                  Saíram {sale.dispatchedCylinders} cheio(s)
                 </span>
               </div>
-            )}
-          </div>
 
-          {/* STEP 2: Pagamento do Cliente */}
-          <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-3.5 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-emerald-950 uppercase tracking-wider">
-                2. Pagamento do Cliente
-              </label>
-              <button
-                type="button"
-                onClick={handleAddPaymentRow}
-                className="text-xs font-bold text-emerald-700 hover:text-emerald-900 underline"
-              >
-                + Dividir Forma de Pagamento
-              </button>
-            </div>
-
-            {/* Quick 1-click full payment presets */}
-            <div className="grid grid-cols-4 gap-1.5">
-              <button
-                type="button"
-                onClick={() => handleQuickPayMethod('pix')}
-                className="py-1.5 text-xs font-bold rounded-lg border border-emerald-300 bg-white hover:bg-emerald-100 text-emerald-800 transition-colors"
-              >
-                100% PIX
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickPayMethod('dinheiro')}
-                className="py-1.5 text-xs font-bold rounded-lg border border-emerald-300 bg-white hover:bg-emerald-100 text-emerald-800 transition-colors"
-              >
-                100% Dinheiro
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickPayMethod('debito')}
-                className="py-1.5 text-xs font-bold rounded-lg border border-emerald-300 bg-white hover:bg-emerald-100 text-emerald-800 transition-colors"
-              >
-                100% Cartão
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickPayMethod('fiado')}
-                className="py-1.5 text-xs font-bold rounded-lg border border-orange-300 bg-orange-50 hover:bg-orange-100 text-orange-900 transition-colors"
-              >
-                100% FIADO
-              </button>
-            </div>
-
-            {/* Payment rows */}
-            <div className="space-y-2">
-              {payments.map((p, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <select
-                    value={p.method}
-                    onChange={(e) =>
-                      handlePaymentChange(idx, 'method', e.target.value as PaymentMethod)
-                    }
-                    className="text-xs font-medium bg-white border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500"
+              {cylinderItems.map((item) => {
+                const value = returnedByProduct[item.productId] ?? 0;
+                return (
+                  <div
+                    key={item.productId}
+                    className="flex items-center justify-between gap-3 bg-white p-2.5 rounded-xl border border-amber-300"
                   >
-                    <option value="dinheiro">Dinheiro (Entra no Caixa)</option>
-                    <option value="pix">PIX (Entra no Caixa)</option>
-                    <option value="debito">Cartão Débito (Entra no Caixa)</option>
-                    <option value="credito">Cartão Crédito (Entra no Caixa)</option>
-                    <option value="fiado">FIADO (Contas a Receber)</option>
-                    <option value="outro">Outro</option>
-                  </select>
-
-                  <div className="relative flex-1">
-                    <span className="absolute left-2.5 top-2 text-xs text-slate-400 font-semibold">
-                      R$
-                    </span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={p.amount || ''}
-                      onChange={(e) =>
-                        handlePaymentChange(idx, 'amount', parseFloat(e.target.value) || 0)
-                      }
-                      placeholder="0,00"
-                      className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded-lg py-2 pl-8 pr-2 focus:ring-1 focus:ring-emerald-500"
-                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-slate-800 truncate">{item.productName}</div>
+                      <div className="text-[11px] text-slate-500">Entregue: {item.quantity}</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => changeReturned(item.productId, value - 1)}
+                        aria-label={`Diminuir vazios de ${item.productName}`}
+                        className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-700 active:scale-95"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min="0"
+                        aria-label={`Vazios devolvidos de ${item.productName}`}
+                        value={value}
+                        onChange={(e) => changeReturned(item.productId, parseInt(e.target.value) || 0)}
+                        className="w-14 h-10 text-center text-lg font-black text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500/40"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => changeReturned(item.productId, value + 1)}
+                        aria-label={`Aumentar vazios de ${item.productName}`}
+                        className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-700 active:scale-95"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
+                );
+              })}
 
-                  {payments.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => handleRemovePaymentRow(idx)}
-                      className="p-1.5 text-slate-400 hover:text-red-500"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
+              {missingCylinders > 0 ? (
+                <div className="text-xs text-amber-900 bg-amber-100 p-2.5 rounded-lg flex items-start gap-1.5">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-700 mt-0.5" />
+                  <span>
+                    <strong>{missingCylinders} vasilhame(s) não voltaram.</strong> O estoque de vazios só recebe o que
+                    retornou, e a diferença fica registrada na auditoria.
+                  </span>
                 </div>
-              ))}
-            </div>
-
-            {/* Split Balance Verification */}
-            <div className="p-2.5 bg-white rounded-xl border border-emerald-200 text-xs space-y-1">
-              <div className="flex justify-between text-slate-600">
-                <span>Total da Venda:</span>
-                <span className="font-bold text-slate-900">
-                  {formatCurrency(sale.totalAmount)}
-                </span>
-              </div>
-              <div className="flex justify-between text-emerald-700">
-                <span>Entra no Caixa (Pago):</span>
-                <span className="font-semibold">{formatCurrency(totalPaid)}</span>
-              </div>
-              {fiadoPart > 0 && (
-                <div className="flex justify-between text-orange-600">
-                  <span>Vai para Contas a Receber (Fiado):</span>
-                  <span className="font-semibold">{formatCurrency(fiadoPart)}</span>
-                </div>
+              ) : (
+                <p className="text-[11px] text-slate-600">
+                  Troca completa: os vazios entram no estoque assim que você confirmar.
+                </p>
               )}
-              <div className="pt-1 border-t border-slate-100 flex justify-between font-bold">
-                <span>Saldo Restante:</span>
-                <span
-                  className={
-                    Math.abs(remaining) < 0.05 ? 'text-emerald-700' : 'text-rose-600'
-                  }
-                >
-                  {Math.abs(remaining) < 0.05
-                    ? 'Total confere R$ 0,00 (OK)'
-                    : remaining > 0
-                    ? `Falta ${formatCurrency(remaining)}`
-                    : `Excede ${formatCurrency(Math.abs(remaining))}`}
-                </span>
-              </div>
             </div>
+          )}
 
-            {/* Seleção de Cliente para FIADO se necessário */}
-            {fiadoPart > 0 && (
-              <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl space-y-1.5">
-                <label className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-                  <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
-                  <span>Vincular Cliente para o FIADO *</span>
+          {/* STEP 2: Pagamento do cliente */}
+          <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-3.5 space-y-2.5">
+            <label className="text-xs font-bold text-emerald-950 uppercase tracking-wider block">
+              {cylinderItems.length > 0 ? '2. ' : ''}Pagamento recebido
+            </label>
+
+            <PaymentSplitEditor
+              total={sale.totalAmount}
+              payments={payments}
+              onChange={setPayments}
+              missingClientForFiado={needsClient}
+            />
+
+            {summary.fiado > 0 && (
+              <div className="space-y-1.5">
+                <label htmlFor="finalize-client" className="text-xs font-bold text-amber-900">
+                  Cliente do fiado *
                 </label>
                 <select
+                  id="finalize-client"
                   value={selectedClientId}
                   onChange={(e) => setSelectedClientId(e.target.value)}
-                  className={`w-full text-xs font-semibold bg-white border rounded-lg p-2 focus:ring-2 focus:outline-none ${
-                    !selectedClientId
-                      ? 'border-amber-500 ring-2 ring-amber-400 text-amber-950'
-                      : 'border-amber-300 text-slate-800'
+                  className={`w-full h-11 text-sm font-semibold bg-white border rounded-xl px-2 focus:ring-2 focus:outline-none ${
+                    !selectedClientId ? 'border-amber-500 ring-2 ring-amber-300' : 'border-slate-300'
                   }`}
                 >
-                  <option value="">-- Selecione o cliente para debitar o FIADO --</option>
+                  <option value="">Selecione o cliente</option>
                   {clients.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name} {c.phone ? `(${c.phone})` : ''} - {c.neighborhood || c.address}
+                      {c.name} {c.phone ? `(${c.phone})` : ''}
                     </option>
                   ))}
                 </select>
-                {!selectedClientId && (
-                  <p className="text-[11px] text-amber-800 font-medium">
-                    A venda não possui cliente cadastrado vinculado. Para lançar o FIADO em Contas a Receber, é obrigatório selecionar o cliente acima.
-                  </p>
-                )}
               </div>
             )}
           </div>
@@ -414,7 +285,7 @@ export const FinalizeDeliveryModal: React.FC<FinalizeDeliveryModalProps> = ({
             id="confirm-finalize-delivery-btn"
             type="button"
             onClick={handleSubmit}
-            disabled={Math.abs(remaining) > 0.05}
+            disabled={!summary.isBalanced || needsClient}
             className="flex-1 py-3 px-5 rounded-xl font-bold text-sm text-white bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
           >
             <CheckCircle2 className="w-5 h-5" />

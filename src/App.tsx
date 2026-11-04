@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ErpProvider, useErp } from './context/ErpContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { Navbar, ActiveTab } from './components/Navbar';
+import { Navbar, ActiveTab, TAB_LABELS } from './components/Navbar';
 import { DashboardView } from './components/DashboardView';
 import { ActiveDeliveriesView } from './components/ActiveDeliveriesView';
 import { SalesHistoryView } from './components/SalesHistoryView';
@@ -20,10 +20,65 @@ import { UsersManagementView } from './components/UsersManagementView';
 import { LoginView } from './components/LoginView';
 import { NewSaleModal } from './components/NewSaleModal';
 import { SupabaseModal } from './components/SupabaseModal';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ArrowLeft, ChevronRight, Home } from 'lucide-react';
+
+const ADMIN_TABS: ActiveTab[] = ['usuarios'];
+
+/** Lê a tela atual do endereço (#/estoque), permitindo atualizar a página sem perder a tela. */
+function readTabFromHash(): ActiveTab {
+  const raw = window.location.hash.replace(/^#\/?/, '');
+  return raw in TAB_LABELS ? (raw as ActiveTab) : 'dashboard';
+}
 
 const MainLayout: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const { currentUser } = useAuth();
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'superadmin';
+  const canOpen = useCallback((tab: ActiveTab) => isAdmin || !ADMIN_TABS.includes(tab), [isAdmin]);
+
+  const [activeTab, setActiveTabState] = useState<ActiveTab>(() => {
+    const tab = readTabFromHash();
+    return canOpen(tab) ? tab : 'dashboard';
+  });
+  // Quantas telas foram abertas nesta sessão (define se "Voltar" usa o histórico do navegador)
+  const historyDepth = useRef(0);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+
+  // Integra com o botão "voltar" do celular/navegador
+  useEffect(() => {
+    window.history.replaceState({ tab: activeTab }, '', `#/${activeTab}`);
+    const onPopState = () => {
+      const tab = readTabFromHash();
+      historyDepth.current = Math.max(0, historyDepth.current - 1);
+      setActiveTabState(canOpen(tab) ? tab : 'dashboard');
+      setMobileMenuOpen(false);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const setActiveTab = useCallback(
+    (tab: ActiveTab) => {
+      const target = canOpen(tab) ? tab : 'dashboard';
+      if (target === activeTabRef.current) return;
+      window.history.pushState({ tab: target }, '', `#/${target}`);
+      historyDepth.current += 1;
+      activeTabRef.current = target;
+      setActiveTabState(target);
+      window.scrollTo({ top: 0 });
+    },
+    [canOpen]
+  );
+
+  const goBack = () => {
+    if (historyDepth.current > 0) {
+      window.history.back();
+    } else {
+      setActiveTab('dashboard');
+    }
+  };
+
   const [isNewSaleOpen, setIsNewSaleOpen] = useState(false);
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -53,7 +108,38 @@ const MainLayout: React.FC = () => {
           sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'
         }`}
       >
-        <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-6 pt-4 pb-24 md:pb-8 min-w-0">
+        <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-6 pt-3 sm:pt-4 pb-28 lg:pb-8 min-w-0">
+          {activeTab !== 'dashboard' && (
+            <nav aria-label="Navegação da página" className="flex items-center gap-2 mb-3">
+              <button
+                type="button"
+                onClick={goBack}
+                className="inline-flex items-center gap-1.5 h-10 pl-2.5 pr-3.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-semibold shadow-xs hover:bg-slate-50 active:scale-95 transition-all"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Voltar</span>
+              </button>
+              <ol className="flex items-center gap-1 text-xs text-slate-500 min-w-0">
+                <li className="hidden sm:block">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('dashboard')}
+                    className="inline-flex items-center gap-1 h-10 px-2 rounded-lg hover:text-slate-900 hover:bg-white"
+                  >
+                    <Home className="w-3.5 h-3.5" />
+                    <span>Início</span>
+                  </button>
+                </li>
+                <li aria-hidden="true" className="hidden sm:block">
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </li>
+                <li className="font-semibold text-slate-800 truncate" aria-current="page">
+                  {TAB_LABELS[activeTab]}
+                </li>
+              </ol>
+            </nav>
+          )}
+
           {activeTab === 'dashboard' && (
             <DashboardView
               setActiveTab={setActiveTab}
@@ -125,16 +211,19 @@ const AuthGate: React.FC = () => {
     return <LoginView />;
   }
 
-  return <MainLayout />;
+  // Os dados da empresa só são carregados depois do login (o banco exige sessão autenticada)
+  return (
+    <ErpProvider>
+      <MainLayout />
+    </ErpProvider>
+  );
 };
 
 export default function App() {
   return (
-    <ErpProvider>
-      <AuthProvider>
-        <AuthGate />
-      </AuthProvider>
-    </ErpProvider>
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
   );
 }
 

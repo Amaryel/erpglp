@@ -1,1 +1,56 @@
 @import "tailwindcss";
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Foco visível para navegação por teclado */
+  :focus-visible {
+    outline: 2px solid var(--color-amber-500);
+    outline-offset: 2px;
+  }
+
+  button:not(:disabled),
+  [role='button'] {
+    cursor: pointer;
+  }
+}
+
+/* Celular/tablet: campos com 16px evitam o zoom automático do iOS ao focar */
+@media (max-width: 1023px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/*
+ * Janelas (modais): em telas baixas o conteúdo passa a rolar em vez de ficar cortado
+ * no topo, e a janela continua centralizada quando há espaço.
+ */
+.fixed.inset-0.z-50.flex.items-center {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-items: flex-start;
+}
+.fixed.inset-0.z-50.flex.items-center > * {
+  margin-block: auto;
+}
+
+/* Barras de rolagem horizontais de abas/filtros discretas */
+.overflow-x-auto {
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

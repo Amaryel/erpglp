@@ -1,331 +1,252 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { AppUser, UserRole, UserStatus } from '../types';
-import { hashPassword, verifyPassword } from '../utils/crypto';
-import { getSupabaseClient, mapDbUser, mapUserToDb } from '../lib/supabase';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
+import { AppUser, UserRole } from '../types';
+import { getSupabaseClient, mapDbUser, normalizeUsername, usernameToLoginEmail } from '../lib/supabase';
+
+type ActionResult = { success: boolean; error?: string };
 
 interface AuthContextType {
   currentUser: AppUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  /** Mensagem exibida na tela de login quando a sessão é encerrada pelo sistema (ex.: bloqueio). */
+  sessionMessage: string | null;
   users: AppUser[];
-  login: (username: string, password?: string) => Promise<{ success: boolean; requiresPasswordSetup?: boolean; error?: string }>;
-  defineFirstAccessPassword: (username: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
-  logout: () => void;
-  createUser: (userData: { username: string; name: string; role: UserRole; password?: string }) => Promise<{ success: boolean; error?: string }>;
-  updateUser: (id: string, updates: Partial<AppUser>) => Promise<{ success: boolean; error?: string }>;
-  toggleBlockUser: (id: string) => Promise<{ success: boolean; error?: string }>;
-  resetUserPassword: (id: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
-  deleteUser: (id: string) => Promise<{ success: boolean; error?: string }>;
+  login: (username: string, password: string) => Promise<ActionResult>;
+  logout: () => Promise<void>;
+  createUser: (userData: { username: string; name: string; role: UserRole; password: string }) => Promise<ActionResult>;
+  updateUser: (id: string, updates: { name: string; role: UserRole }) => Promise<ActionResult>;
+  toggleBlockUser: (id: string) => Promise<ActionResult>;
+  resetUserPassword: (id: string, newPassword: string) => Promise<ActionResult>;
+  deleteUser: (id: string) => Promise<ActionResult>;
   reloadUsers: () => Promise<void>;
 }
 
-const STORAGE_SESSION_KEY = 'erpglp_auth_session_v2';
-const STORAGE_USERS_KEY = 'erpglp_auth_users_v2';
+export const MIN_PASSWORD_LENGTH = 8;
 
-// Usuário padrão inicial Superadmin (nome de usuário amaryel)
-export const DEFAULT_SUPERADMIN: AppUser = {
-  id: 'usr-superadmin-01',
-  username: 'amaryel',
-  name: 'Amaryel Costa (Superadmin)',
-  role: 'superadmin',
-  status: 'ativo',
-  hasDefinedPassword: false,
-  createdAt: '2026-01-01T00:00:00.000Z',
-};
+// Chaves da versão antiga: guardavam a lista de usuários e hashes de senha no navegador.
+const LEGACY_AUTH_KEYS = [
+  'erpglp_auth_session_v1',
+  'erpglp_auth_session_v2',
+  'erpglp_auth_users_v1',
+  'erpglp_auth_users_v2',
+];
+
+const USER_COLUMNS = 'id, username, name, role, status, has_defined_password, last_login_at, created_at, updated_at';
+
+const NO_DB_ERROR = 'Banco de dados online não configurado. Entre em contato com o administrador do sistema.';
+
+/** Converte erros do Supabase em mensagens claras para o operador. */
+function friendlyError(err: { message?: string; code?: string } | null | undefined, fallback: string): string {
+  if (!err) return fallback;
+  const msg = err.message || '';
+  if (/invalid login credentials/i.test(msg)) return 'Usuário ou senha incorretos.';
+  if (/rate limit|too many/i.test(msg)) return 'Muitas tentativas seguidas. Aguarde alguns minutos e tente novamente.';
+  if (/failed to fetch|network/i.test(msg)) return 'Sem conexão com o servidor. Verifique sua internet.';
+  if (/could not find the function|PGRST202/i.test(msg + (err.code || ''))) {
+    return 'O banco ainda não foi atualizado com o script de segurança. Peça ao Superadmin para executá-lo no Supabase.';
+  }
+  // Mensagens de negócio vindas das funções erp_* já estão em português
+  return msg || fallback;
+}
+
+function clearLegacyAuthStorage() {
+  try {
+    LEGACY_AUTH_KEYS.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    // Armazenamento indisponível (aba anônima/bloqueada): nada a limpar
+  }
+}
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_SESSION_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.id && parsed.username && parsed.status === 'ativo') {
-          return parsed;
-        }
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  });
-
-  const [users, setUsers] = useState<AppUser[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_USERS_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-      return [DEFAULT_SUPERADMIN];
-    } catch {
-      return [DEFAULT_SUPERADMIN];
-    }
-  });
-
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const [users, setUsers] = useState<AppUser[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [sessionMessage, setSessionMessage] = useState<string | null>(null);
+  const currentUserRef = useRef<AppUser | null>(null);
+  currentUserRef.current = currentUser;
 
-  // Carrega e sincroniza usuários diretamente do Supabase Online
-  const reloadUsers = useCallback(async () => {
-    const supabase = getSupabaseClient();
-    if (!supabase) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .order('created_at', { ascending: true });
-
-      if (!error && data) {
-        if (data.length > 0) {
-          const mappedUsers = data.map(mapDbUser);
-          setUsers(mappedUsers);
-          localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(mappedUsers));
-
-          // Se o usuário logado atualmente sofreu alteração no banco (ex: bloqueado por superadmin)
-          const savedSession = localStorage.getItem(STORAGE_SESSION_KEY);
-          if (savedSession) {
-            try {
-              const parsedSession = JSON.parse(savedSession);
-              const freshCurrentUser = mappedUsers.find((u) => u.id === parsedSession.id);
-              if (freshCurrentUser) {
-                if (freshCurrentUser.status === 'bloqueado') {
-                  setCurrentUser(null);
-                  localStorage.removeItem(STORAGE_SESSION_KEY);
-                } else {
-                  setCurrentUser(freshCurrentUser);
-                  localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(freshCurrentUser));
-                }
-              }
-            } catch {
-              // Ignore parse error
-            }
-          }
-        } else {
-          // Se a tabela existe mas está vazia, insere o superadmin padrão
-          const { error: insertErr } = await supabase
-            .from('users')
-            .insert(mapUserToDb(DEFAULT_SUPERADMIN));
-          if (!insertErr) {
-            setUsers([DEFAULT_SUPERADMIN]);
-          }
-        }
-      }
-    } catch (err) {
-      console.error('Erro ao buscar usuários do Supabase:', err);
-    }
+  const clearSessionState = useCallback(() => {
+    setCurrentUser(null);
+    setUsers([]);
   }, []);
 
-  // Carga inicial
-  useEffect(() => {
-    reloadUsers().finally(() => setIsLoading(false));
-
-    // Realtime Supabase: sincroniza usuários entre todos os dispositivos instantaneamente
+  /** Carrega o perfil do usuário autenticado. Encerra a sessão se não houver acesso liberado. */
+  const loadProfile = useCallback(async (): Promise<ActionResult> => {
     const supabase = getSupabaseClient();
-    if (supabase) {
-      const userChannel = supabase
-        .channel('public:users_auth')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => {
-          reloadUsers();
-        })
-        .subscribe();
+    if (!supabase) return { success: false, error: NO_DB_ERROR };
 
-      return () => {
-        supabase.removeChannel(userChannel);
-      };
+    const { data, error } = await supabase.rpc('erp_me');
+    if (error && /failed to fetch|network|load failed/i.test(error.message || '')) {
+      // Queda de internet não deve derrubar quem já está trabalhando
+      return { success: Boolean(currentUserRef.current), error: friendlyError(error, '') };
     }
-  }, [reloadUsers]);
-
-  // Login com validação direta online no Supabase
-  const login = async (
-    usernameInput: string,
-    passwordInput?: string
-  ): Promise<{ success: boolean; requiresPasswordSetup?: boolean; error?: string }> => {
-    const cleanUsername = usernameInput.trim().toLowerCase();
-    if (!cleanUsername) {
-      return { success: false, error: 'Por favor, informe seu nome de usuário.' };
+    if (error) {
+      await supabase.auth.signOut({ scope: 'local' });
+      clearSessionState();
+      return { success: false, error: friendlyError(error, 'Não foi possível carregar seu perfil.') };
+    }
+    if (!data) {
+      await supabase.auth.signOut({ scope: 'local' });
+      clearSessionState();
+      return { success: false, error: 'Este login não está vinculado a um usuário do sistema.' };
     }
 
-    const supabase = getSupabaseClient();
-    let userRow: any = null;
-
-    if (supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('username', cleanUsername)
-          .maybeSingle();
-
-        if (!error && data) {
-          userRow = data;
-        }
-      } catch (err) {
-        console.error('Erro ao consultar usuário no Supabase:', err);
-      }
+    const profile = mapDbUser(data);
+    if (profile.status !== 'ativo') {
+      await supabase.auth.signOut({ scope: 'local' });
+      clearSessionState();
+      return { success: false, error: 'Este usuário está BLOQUEADO. Entre em contato com o Superadmin.' };
     }
 
-    // Se não encontrou no Supabase, tenta buscar na lista local
-    let user: AppUser | undefined = userRow ? mapDbUser(userRow) : users.find((u) => u.username.toLowerCase() === cleanUsername);
-
-    // Fallback: Se for amaryel e ainda não existir registro no Supabase
-    if (!user && cleanUsername === 'amaryel') {
-      user = DEFAULT_SUPERADMIN;
-    }
-
-    if (!user) {
-      return { success: false, error: 'Usuário não encontrado no sistema. Verifique os dados digitados.' };
-    }
-
-    // 1. Validação de bloqueio
-    if (user.status === 'bloqueado') {
-      return {
-        success: false,
-        error: 'Este usuário está BLOQUEADO. Entre em contato com o superadministrador.',
-      };
-    }
-
-    // 2. Primeiro Acesso: Senha ainda não definida
-    if (!user.hasDefinedPassword || !user.passwordHash) {
-      return {
-        success: false,
-        requiresPasswordSetup: true,
-        error: 'Primeiro acesso detectado. Por favor, defina sua senha de segurança.',
-      };
-    }
-
-    // 3. Usuário já tem senha definida -> A senha é estritamente OBRIGATÓRIA
-    if (!passwordInput || !passwordInput.trim()) {
-      return { success: false, error: 'Por favor, digite sua senha de acesso.' };
-    }
-
-    // Validação criptográfica do hash SHA-256
-    const isValid = await verifyPassword(passwordInput, user.passwordHash);
-    if (!isValid) {
-      return { success: false, error: 'Senha incorreta. Verifique e tente novamente.' };
-    }
-
-    // Login autorizado com sucesso
-    const updatedUser: AppUser = {
-      ...user,
-      lastLoginAt: new Date().toISOString(),
-    };
-
-    setCurrentUser(updatedUser);
-    localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(updatedUser));
-
-    // Atualiza data de último login no Supabase
-    if (supabase) {
-      supabase
-        .from('users')
-        .update({ last_login_at: updatedUser.lastLoginAt })
-        .eq('id', user.id)
-        .then();
-    }
-
+    setCurrentUser(profile);
     return { success: true };
-  };
+  }, [clearSessionState]);
 
-  // Define a senha de primeiro acesso e grava no Supabase Online
-  const defineFirstAccessPassword = async (
-    usernameInput: string,
-    newPassword: string
-  ): Promise<{ success: boolean; error?: string }> => {
-    const cleanUsername = usernameInput.trim().toLowerCase();
-    if (!cleanUsername) {
-      return { success: false, error: 'Usuário não informado.' };
+  const reloadUsers = useCallback(async () => {
+    const supabase = getSupabaseClient();
+    if (!supabase || !currentUserRef.current) return;
+
+    const { data, error } = await supabase
+      .from('users')
+      .select(USER_COLUMNS)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Erro ao buscar usuários:', error.message);
+      return;
     }
-    if (!newPassword || newPassword.length < 4) {
-      return { success: false, error: 'A nova senha deve ter no mínimo 4 caracteres.' };
+
+    const mapped = (data || []).map(mapDbUser);
+    setUsers(mapped);
+
+    // Reflete alterações feitas por outro administrador (cargo, nome ou bloqueio)
+    const me = currentUserRef.current;
+    const fresh = mapped.find((u) => u.id === me?.id);
+    if (me && !fresh) {
+      // Usuário bloqueado deixa de enxergar a tabela: valida pelo servidor
+      const res = await loadProfile();
+      if (!res.success) setSessionMessage(res.error || null);
+    } else if (fresh) {
+      setCurrentUser(fresh);
     }
+  }, [loadProfile]);
+
+  // Sessão inicial + escuta de login/logout/expiração
+  useEffect(() => {
+    clearLegacyAuthStorage();
 
     const supabase = getSupabaseClient();
-
-    // Consulta direta no Supabase para garantir que ninguém definiu a senha em outro navegador
-    let existingDbUser: any = null;
-    if (supabase) {
-      const { data } = await supabase
-        .from('users')
-        .select('*')
-        .eq('username', cleanUsername)
-        .maybeSingle();
-      existingDbUser = data;
+    if (!supabase) {
+      setIsLoading(false);
+      return;
     }
 
-    // Trava de segurança: se a senha já foi definida no banco, impede sobrescrita
-    if (existingDbUser && existingDbUser.has_defined_password && existingDbUser.password_hash) {
-      return {
-        success: false,
-        error: 'A senha deste usuário já foi definida anteriormente no banco online. Faça login normal com sua senha.',
-      };
-    }
+    let active = true;
 
-    const passwordHash = await hashPassword(newPassword);
-    const userId = existingDbUser?.id || (cleanUsername === 'amaryel' ? DEFAULT_SUPERADMIN.id : `usr-${Date.now()}`);
-    const userName = existingDbUser?.name || (cleanUsername === 'amaryel' ? DEFAULT_SUPERADMIN.name : cleanUsername);
-    const userRole = existingDbUser?.role || (cleanUsername === 'amaryel' ? 'superadmin' : 'operador');
-
-    const updatedUser: AppUser = {
-      id: userId,
-      username: cleanUsername,
-      name: userName,
-      role: userRole,
-      status: 'ativo',
-      passwordHash,
-      hasDefinedPassword: true,
-      lastLoginAt: new Date().toISOString(),
-      createdAt: existingDbUser?.created_at || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    // Grava diretamente no Supabase Online
-    if (supabase) {
-      const dbPayload = mapUserToDb(updatedUser);
-      const { error: upsertErr } = await supabase
-        .from('users')
-        .upsert(dbPayload, { onConflict: 'username' });
-
-      if (upsertErr) {
-        console.error('Erro ao gravar senha no Supabase:', upsertErr);
-        return {
-          success: false,
-          error: `Erro ao salvar senha no Supabase: ${upsertErr.message}. Certifique-se de que executou o script SQL das tabelas no Supabase.`,
-        };
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (data.session) {
+        const res = await loadProfile();
+        if (!res.success && active) setSessionMessage(res.error || null);
       }
-    }
-
-    // Atualiza estado local e sessão
-    setUsers((prev) => {
-      const exists = prev.some((u) => u.username.toLowerCase() === cleanUsername);
-      if (exists) {
-        return prev.map((u) => (u.username.toLowerCase() === cleanUsername ? updatedUser : u));
-      }
-      return [...prev, updatedUser];
+      if (active) setIsLoading(false);
     });
 
-    setCurrentUser(updatedUser);
-    localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(updatedUser));
-    localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify([...users.filter((u) => u.id !== updatedUser.id), updatedUser]));
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        clearSessionState();
+      }
+    });
 
-    return { success: true };
+    return () => {
+      active = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [loadProfile, clearSessionState]);
+
+  // Lista de usuários + tempo real somente enquanto houver alguém autenticado
+  const currentUserId = currentUser?.id;
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    if (!supabase || !currentUserId) return;
+
+    reloadUsers();
+    const channel = supabase
+      .channel('public:users_auth')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => {
+        reloadUsers();
+      })
+      .subscribe();
+
+    // O tempo real respeita o RLS: um usuário recém-bloqueado não recebe mais eventos.
+    // Por isso o status é revalidado periodicamente e ao voltar para a aba.
+    const verifyAccess = async () => {
+      const res = await loadProfile();
+      if (!res.success) setSessionMessage(res.error || null);
+    };
+    const interval = window.setInterval(verifyAccess, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') verifyAccess();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      supabase.removeChannel(channel);
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [currentUserId, reloadUsers, loadProfile]);
+
+  const login = async (usernameInput: string, passwordInput: string): Promise<ActionResult> => {
+    setSessionMessage(null);
+    const username = normalizeUsername(usernameInput);
+    if (!username) return { success: false, error: 'Informe seu nome de usuário.' };
+    if (!passwordInput) return { success: false, error: 'Digite sua senha de acesso.' };
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return { success: false, error: NO_DB_ERROR };
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: usernameToLoginEmail(username),
+      password: passwordInput,
+    });
+    if (error) {
+      return { success: false, error: friendlyError(error, 'Falha ao autenticar.') };
+    }
+
+    const res = await loadProfile();
+    if (res.success) {
+      supabase.rpc('erp_touch_login').then(({ error: touchErr }) => {
+        if (touchErr) console.warn('Não foi possível registrar o último acesso:', touchErr.message);
+      });
+    }
+    return res;
   };
 
-  // Logout
-  const logout = () => {
-    setCurrentUser(null);
+  const logout = async () => {
+    const supabase = getSupabaseClient();
+    clearSessionState();
     try {
-      localStorage.removeItem(STORAGE_SESSION_KEY);
-      localStorage.removeItem('erpglp_auth_session_v1');
       sessionStorage.clear();
-    } catch (e) {
-      console.error('Error clearing session:', e);
+    } catch {
+      // ignore
+    }
+    if (supabase) {
+      await supabase.auth.signOut({ scope: 'local' });
     }
   };
 
-  // Criar novo usuário (Superadmin ou Admin)
+  /** Executa uma função administrativa no servidor e atualiza a lista. */
+  const runAdminRpc = async (fn: string, args: Record<string, unknown>, fallback: string): Promise<ActionResult> => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { success: false, error: NO_DB_ERROR };
+    const { error } = await supabase.rpc(fn, args);
+    if (error) return { success: false, error: friendlyError(error, fallback) };
+    await reloadUsers();
+    return { success: true };
+  };
+
   const createUser = async ({
     username,
     name,
@@ -335,188 +256,48 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     username: string;
     name: string;
     role: UserRole;
-    password?: string;
-  }): Promise<{ success: boolean; error?: string }> => {
-    const cleanUsername = username.trim().toLowerCase();
-    if (!cleanUsername) return { success: false, error: 'Informe o nome de usuário.' };
+    password: string;
+  }): Promise<ActionResult> => {
+    if (!normalizeUsername(username)) return { success: false, error: 'Informe o nome de usuário.' };
     if (!name.trim()) return { success: false, error: 'Informe o nome completo.' };
-
-    // Regra: Apenas Superadmin pode criar outro Superadmin
-    if (role === 'superadmin' && currentUser?.role !== 'superadmin') {
-      return {
-        success: false,
-        error: 'Apenas o Superadmin tem permissão para criar usuários com privilégios de Superadmin.',
-      };
+    if (!password || password.length < MIN_PASSWORD_LENGTH) {
+      return { success: false, error: `A senha deve ter no mínimo ${MIN_PASSWORD_LENGTH} caracteres.` };
     }
-
-    const exists = users.some((u) => u.username.toLowerCase() === cleanUsername);
-    if (exists) {
-      return { success: false, error: 'Este nome de usuário já está cadastrado no sistema.' };
-    }
-
-    let passwordHash: string | undefined = undefined;
-    let hasDefinedPassword = false;
-
-    if (password && password.trim().length >= 4) {
-      passwordHash = await hashPassword(password.trim());
-      hasDefinedPassword = true;
-    }
-
-    const newUser: AppUser = {
-      id: `usr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      username: cleanUsername,
-      name: name.trim(),
-      role,
-      status: 'ativo',
-      passwordHash,
-      hasDefinedPassword,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      const { error } = await supabase.from('users').insert(mapUserToDb(newUser));
-      if (error) {
-        return { success: false, error: `Erro no Supabase: ${error.message}` };
-      }
-    }
-
-    setUsers((prev) => [...prev, newUser]);
-    return { success: true };
+    return runAdminRpc(
+      'erp_admin_create_user',
+      { p_username: normalizeUsername(username), p_name: name.trim(), p_role: role, p_password: password },
+      'Erro ao criar usuário.'
+    );
   };
 
-  // Atualizar usuário
-  const updateUser = async (
-    id: string,
-    updates: Partial<AppUser>
-  ): Promise<{ success: boolean; error?: string }> => {
-    const user = users.find((u) => u.id === id);
-    if (!user) return { success: false, error: 'Usuário não encontrado.' };
-
-    // Regra de segurança: Apenas o próprio Superadmin pode alterar a conta ou permissões de um Superadmin
-    if (user.role === 'superadmin' && currentUser?.role !== 'superadmin') {
-      return {
-        success: false,
-        error: 'Acesso Negado: Apenas o Superadmin pode alterar os dados ou permissões do Superadmin.',
-      };
-    }
-
-    // Regra: Não-superadmins não podem promover usuários a superadmin
-    if (updates.role === 'superadmin' && currentUser?.role !== 'superadmin') {
-      return {
-        success: false,
-        error: 'Acesso Negado: Apenas o Superadmin pode conceder o cargo de Superadmin.',
-      };
-    }
-
-    const updatedUser: AppUser = {
-      ...user,
-      ...updates,
-      updatedAt: new Date().toISOString(),
-    };
-
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      const { error } = await supabase
-        .from('users')
-        .update(mapUserToDb(updatedUser))
-        .eq('id', id);
-
-      if (error) {
-        return { success: false, error: `Erro ao atualizar no Supabase: ${error.message}` };
-      }
-    }
-
-    setUsers((prev) => prev.map((u) => (u.id === id ? updatedUser : u)));
-    if (currentUser?.id === id) {
-      setCurrentUser(updatedUser);
-      localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(updatedUser));
-    }
-
-    return { success: true };
+  const updateUser = async (id: string, updates: { name: string; role: UserRole }): Promise<ActionResult> => {
+    if (!updates.name.trim()) return { success: false, error: 'Informe o nome completo.' };
+    return runAdminRpc(
+      'erp_admin_update_user',
+      { p_id: id, p_name: updates.name.trim(), p_role: updates.role },
+      'Erro ao atualizar usuário.'
+    );
   };
 
-  // Bloquear / Desbloquear usuário (Superadmin)
-  const toggleBlockUser = async (id: string): Promise<{ success: boolean; error?: string }> => {
+  const toggleBlockUser = async (id: string): Promise<ActionResult> => {
     const user = users.find((u) => u.id === id);
     if (!user) return { success: false, error: 'Usuário não encontrado.' };
-
-    // Regra: Apenas Superadmin pode bloquear ou desbloquear
-    if (currentUser?.role !== 'superadmin') {
-      return {
-        success: false,
-        error: 'Apenas o Superadmin possui autorização para bloquear ou desbloquear usuários.',
-      };
-    }
-
-    // Proteção absoluta: O superadmin amaryel NUNCA pode ser bloqueado
-    if (user.username.toLowerCase() === 'amaryel' || user.role === 'superadmin') {
-      return {
-        success: false,
-        error: 'O usuário Superadmin possui proteção total de segurança e não pode ser bloqueado.',
-      };
-    }
-
-    const newStatus: UserStatus = user.status === 'ativo' ? 'bloqueado' : 'ativo';
-    return updateUser(id, { status: newStatus });
+    return runAdminRpc(
+      'erp_admin_set_status',
+      { p_id: id, p_status: user.status === 'ativo' ? 'bloqueado' : 'ativo' },
+      'Erro ao alterar status.'
+    );
   };
 
-  // Redefinir senha de um usuário
-  const resetUserPassword = async (
-    id: string,
-    newPassword: string
-  ): Promise<{ success: boolean; error?: string }> => {
-    const user = users.find((u) => u.id === id);
-    if (!user) return { success: false, error: 'Usuário não encontrado.' };
-
-    // Regra: Admin comum não pode redefinir a senha do Superadmin
-    if (user.role === 'superadmin' && currentUser?.role !== 'superadmin') {
-      return {
-        success: false,
-        error: 'Acesso Negado: Apenas o Superadmin pode redefinir a senha da conta Superadmin.',
-      };
+  const resetUserPassword = async (id: string, newPassword: string): Promise<ActionResult> => {
+    if (!newPassword || newPassword.length < MIN_PASSWORD_LENGTH) {
+      return { success: false, error: `A nova senha deve ter no mínimo ${MIN_PASSWORD_LENGTH} caracteres.` };
     }
-
-    if (!newPassword || newPassword.length < 4) {
-      return { success: false, error: 'A nova senha deve ter no mínimo 4 caracteres.' };
-    }
-
-    const passwordHash = await hashPassword(newPassword);
-    return updateUser(id, {
-      passwordHash,
-      hasDefinedPassword: true,
-    });
+    return runAdminRpc('erp_admin_set_password', { p_id: id, p_password: newPassword }, 'Erro ao redefinir senha.');
   };
 
-  // Excluir usuário
-  const deleteUser = async (id: string): Promise<{ success: boolean; error?: string }> => {
-    const user = users.find((u) => u.id === id);
-    if (!user) return { success: false, error: 'Usuário não encontrado.' };
-
-    // Regra: Apenas Superadmin pode excluir usuários
-    if (currentUser?.role !== 'superadmin') {
-      return {
-        success: false,
-        error: 'Apenas o Superadmin possui autorização para excluir usuários.',
-      };
-    }
-
-    // Proteção: O superadmin não pode ser excluído
-    if (user.username.toLowerCase() === 'amaryel' || user.role === 'superadmin') {
-      return { success: false, error: 'O usuário Superadmin principal não pode ser excluído.' };
-    }
-
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      const { error } = await supabase.from('users').delete().eq('id', id);
-      if (error) {
-        return { success: false, error: `Erro ao excluir no Supabase: ${error.message}` };
-      }
-    }
-
-    setUsers((prev) => prev.filter((u) => u.id !== id));
-    return { success: true };
+  const deleteUser = async (id: string): Promise<ActionResult> => {
+    return runAdminRpc('erp_admin_delete_user', { p_id: id }, 'Erro ao excluir usuário.');
   };
 
   const isAuthenticated = Boolean(currentUser && currentUser.status === 'ativo');
@@ -527,9 +308,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         currentUser,
         isAuthenticated,
         isLoading,
+        sessionMessage,
         users,
         login,
-        defineFirstAccessPassword,
         logout,
         createUser,
         updateUser,

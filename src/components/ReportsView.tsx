@@ -228,14 +228,14 @@ export const ReportsView: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0 max-w-full">
           {/* Period Selector */}
-          <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-bold">
+          <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-bold overflow-x-auto min-w-0">
             {(['hoje', 'ontem', '7dias', 'mes', 'todos'] as Period[]).map((p) => (
               <button
                 key={p}
                 onClick={() => setPeriod(p)}
-                className={`px-3 py-1.5 rounded-lg transition-all capitalize ${
+                className={`px-3 py-1.5 rounded-lg transition-all capitalize whitespace-nowrap ${
                   period === p ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
@@ -246,8 +246,9 @@ export const ReportsView: React.FC = () => {
 
           <button
             onClick={handlePrint}
-            className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors"
+            className="w-10 h-10 shrink-0 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors"
             title="Imprimir Relatório"
+            aria-label="Imprimir relatório"
           >
             <Printer className="w-4 h-4" />
           </button>

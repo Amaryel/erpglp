@@ -25,24 +25,41 @@ import {
   Key,
   ExternalLink,
   UploadCloud,
+  UserCheck,
+  UserX,
+  Plus,
+  Edit2,
+  X,
+  Boxes,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
 import { useAuth } from '../context/AuthContext';
 import {
   getStoredSupabaseConfig,
   saveStoredSupabaseConfig,
+  getSupabaseKeyProblem,
   clearStoredSupabaseConfig,
   testSupabaseConnection,
   SUPABASE_SCHEMA_SQL,
 } from '../lib/supabase';
+import { maskPhone, formatPhone } from '../utils/formatters';
+import { DeliveryPerson, Supplier } from '../types';
 
 export const ConfigView: React.FC = () => {
   const { currentUser } = useAuth();
   const isSuperadmin = currentUser?.role === 'superadmin';
+  // Dados da empresa (inclui a chave PIX do comprovante): somente administradores alteram
+  const canEditSettings = isSuperadmin || currentUser?.role === 'admin';
 
   const {
     settings,
     updateSettings,
+    deliveryPersons,
+    addDeliveryPerson,
+    updateDeliveryPerson,
+    suppliers,
+    addSupplier,
+    updateSupplier,
     exportDatabaseJson,
     importDatabaseJson,
     clearOperationalData,
@@ -100,10 +117,119 @@ export const ConfigView: React.FC = () => {
   const [confirmRestoreOpen, setConfirmRestoreOpen] = useState(false);
   const [restorePayload, setRestorePayload] = useState<string>('');
 
+  // Delivery Person Modal State
+  const [showDeliveryModal, setShowDeliveryModal] = useState(false);
+  const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
+  const [deliveryName, setDeliveryName] = useState('');
+  const [deliveryPhone, setDeliveryPhone] = useState('');
+  const [deliveryVehicle, setDeliveryVehicle] = useState('Moto');
+  const [deliveryIsActive, setDeliveryIsActive] = useState(true);
+
+  // Supplier Modal State
+  const [showSupplierModal, setShowSupplierModal] = useState(false);
+  const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
+  const [supplierName, setSupplierName] = useState('');
+  const [supplierPhone, setSupplierPhone] = useState('');
+  const [supplierContact, setSupplierContact] = useState('');
+  const [supplierProducts, setSupplierProducts] = useState('');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleOpenNewDelivery = () => {
+    setEditingDeliveryId(null);
+    setDeliveryName('');
+    setDeliveryPhone('');
+    setDeliveryVehicle('Moto');
+    setDeliveryIsActive(true);
+    setShowDeliveryModal(true);
+  };
+
+  const handleOpenEditDelivery = (dp: DeliveryPerson) => {
+    setEditingDeliveryId(dp.id);
+    setDeliveryName(dp.name);
+    setDeliveryPhone(dp.phone ? maskPhone(dp.phone) : '');
+    setDeliveryVehicle(dp.vehicle || 'Moto');
+    setDeliveryIsActive(dp.isActive);
+    setShowDeliveryModal(true);
+  };
+
+  const handleSaveDelivery = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deliveryName.trim()) return;
+
+    if (editingDeliveryId) {
+      updateDeliveryPerson(editingDeliveryId, {
+        name: deliveryName.trim(),
+        phone: deliveryPhone.trim() ? maskPhone(deliveryPhone.trim()) : '',
+        vehicle: deliveryVehicle.trim() || undefined,
+        isActive: deliveryIsActive,
+      });
+      setActionMessage({ type: 'success', text: 'Entregador atualizado com sucesso!' });
+    } else {
+      addDeliveryPerson({
+        name: deliveryName.trim(),
+        phone: deliveryPhone.trim() ? maskPhone(deliveryPhone.trim()) : '',
+        vehicle: deliveryVehicle.trim() || undefined,
+        isActive: deliveryIsActive,
+      });
+      setActionMessage({ type: 'success', text: 'Entregador cadastrado com sucesso!' });
+    }
+    setShowDeliveryModal(false);
+  };
+
+  const handleToggleDeliveryActive = (dp: DeliveryPerson) => {
+    updateDeliveryPerson(dp.id, { isActive: !dp.isActive });
+    setActionMessage({
+      type: 'success',
+      text: `Entregador "${dp.name}" ${dp.isActive ? 'desativado' : 'ativado'} com sucesso!`,
+    });
+  };
+
+  const handleOpenNewSupplier = () => {
+    setEditingSupplierId(null);
+    setSupplierName('');
+    setSupplierPhone('');
+    setSupplierContact('');
+    setSupplierProducts('');
+    setShowSupplierModal(true);
+  };
+
+  const handleOpenEditSupplier = (s: Supplier) => {
+    setEditingSupplierId(s.id);
+    setSupplierName(s.name);
+    setSupplierPhone(s.phone ? maskPhone(s.phone) : '');
+    setSupplierContact(s.contactPerson || '');
+    setSupplierProducts(s.productsSupplied || '');
+    setShowSupplierModal(true);
+  };
+
+  const handleSaveSupplier = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supplierName.trim()) return;
+
+    if (editingSupplierId) {
+      updateSupplier(editingSupplierId, {
+        name: supplierName.trim(),
+        phone: supplierPhone.trim() ? maskPhone(supplierPhone.trim()) : '',
+        contactPerson: supplierContact.trim() || undefined,
+        productsSupplied: supplierProducts.trim() || undefined,
+      });
+      setActionMessage({ type: 'success', text: 'Fornecedor atualizado com sucesso!' });
+    } else {
+      addSupplier({
+        name: supplierName.trim(),
+        phone: supplierPhone.trim() ? maskPhone(supplierPhone.trim()) : '',
+        contactPerson: supplierContact.trim() || undefined,
+        productsSupplied: supplierProducts.trim() || undefined,
+      });
+      setActionMessage({ type: 'success', text: 'Fornecedor cadastrado com sucesso!' });
+    }
+    setShowSupplierModal(false);
+  };
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEditSettings) return;
     updateSettings({
       companyName: companyName.trim(),
       tradingName: tradingName.trim(),
@@ -137,6 +263,12 @@ export const ConfigView: React.FC = () => {
         success: false,
         message: 'Informe a URL do projeto e a chave Anon do Supabase.',
       });
+      return;
+    }
+
+    const keyProblem = getSupabaseKeyProblem(cleanKey);
+    if (keyProblem) {
+      setDbTestResult({ success: false, message: keyProblem });
       return;
     }
 
@@ -338,8 +470,8 @@ export const ConfigView: React.FC = () => {
               <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-inner shrink-0">
                 <Database className="w-6 h-6" />
               </div>
-              <div>
-                <div className="flex items-center gap-2">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-base sm:text-lg font-black text-white">
                     Banco de Dados Online (Supabase)
                   </h2>
@@ -553,6 +685,12 @@ export const ConfigView: React.FC = () => {
         {/* Left Column: Company & Receipt Settings (2 cols) */}
         <div className="lg:col-span-2 space-y-4">
           <form onSubmit={handleSaveSettings} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            {!canEditSettings && (
+              <p className="text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                Somente administradores podem alterar os dados da empresa e a chave PIX.
+              </p>
+            )}
+            <fieldset disabled={!canEditSettings} className="contents [&_:disabled]:opacity-60 [&_:disabled]:cursor-not-allowed">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h2 className="text-sm font-black text-slate-900 flex items-center gap-2">
                 <Building2 className="w-4 h-4 text-amber-500" />
@@ -608,12 +746,13 @@ export const ConfigView: React.FC = () => {
 
               <div>
                 <label className="font-bold text-slate-700 block mb-1">
-                  Telefone / WhatsApp Comercial
+                  Telefone / WhatsApp Comercial <span className="text-slate-400 font-normal">(Opcional)</span>
                 </label>
                 <input
                   type="text"
+                  placeholder="(89) 9 9999 - 9999"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => setPhone(maskPhone(e.target.value))}
                   className="w-full border border-slate-300 rounded-xl p-2.5 font-medium"
                 />
               </div>
@@ -713,7 +852,167 @@ export const ConfigView: React.FC = () => {
                 <span>Salvar Configurações</span>
               </button>
             </div>
+            </fieldset>
           </form>
+
+          {/* Entregadores Management Card */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/15 text-amber-600 flex items-center justify-center">
+                  <Truck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-black text-slate-900">
+                    Entregadores Cadastrados
+                  </h2>
+                  <p className="text-[11px] text-slate-500">
+                    Gerencie a equipe de entrega para vinculação rápida nas vendas
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenNewDelivery}
+                className="bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs px-3 py-1.5 rounded-xl shadow-xs flex items-center gap-1.5 transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Novo Entregador</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {deliveryPersons.map((dp) => (
+                <div
+                  key={dp.id}
+                  className={`p-3 rounded-xl border flex items-center justify-between transition-all ${
+                    dp.isActive
+                      ? 'bg-slate-50/80 border-slate-200 hover:border-slate-300'
+                      : 'bg-slate-100/60 border-slate-200 opacity-60'
+                  }`}
+                >
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-xs text-slate-900">{dp.name}</span>
+                      <span
+                        className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full uppercase ${
+                          dp.isActive
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {dp.isActive ? 'Ativo' : 'Inativo'}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                      {dp.phone ? (
+                        <span className="flex items-center gap-1 font-mono text-emerald-700">
+                          <Phone className="w-3 h-3" />
+                          {formatPhone(dp.phone)}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 italic">Sem telefone</span>
+                      )}
+                      {dp.vehicle && (
+                        <span className="text-slate-500 font-medium">({dp.vehicle})</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleDeliveryActive(dp)}
+                      title={dp.isActive ? 'Desativar' : 'Ativar'}
+                      className="p-1 rounded-lg hover:bg-slate-200 text-slate-500 transition-colors"
+                    >
+                      {dp.isActive ? <UserX className="w-3.5 h-3.5 text-red-500" /> : <UserCheck className="w-3.5 h-3.5 text-emerald-600" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditDelivery(dp)}
+                      title="Editar Entregador"
+                      className="p-1 rounded-lg hover:bg-slate-200 text-slate-700 transition-colors"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {deliveryPersons.length === 0 && (
+                <div className="sm:col-span-2 text-center py-4 text-xs text-slate-400 italic">
+                  Nenhum entregador cadastrado. Clique em "+ Novo Entregador" para adicionar.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Fornecedores Management Card */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-500/15 text-blue-600 flex items-center justify-center">
+                  <Boxes className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-black text-slate-900">
+                    Fornecedores de Gás & Água
+                  </h2>
+                  <p className="text-[11px] text-slate-500">
+                    Cadastre distribuidoras parceiras e contatos de reposição
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenNewSupplier}
+                className="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs px-3 py-1.5 rounded-xl shadow-xs flex items-center gap-1.5 transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Novo Fornecedor</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {suppliers.map((s) => (
+                <div
+                  key={s.id}
+                  className="p-3 rounded-xl border border-slate-200 bg-slate-50/80 hover:border-slate-300 flex items-center justify-between transition-all"
+                >
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-xs text-slate-900 block">{s.name}</span>
+                    <div className="text-[11px] text-slate-500 flex flex-col gap-0.5">
+                      {s.phone ? (
+                        <span className="flex items-center gap-1 font-mono text-emerald-700">
+                          <Phone className="w-3 h-3" />
+                          {formatPhone(s.phone)}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 italic">Sem telefone</span>
+                      )}
+                      {s.contactPerson && (
+                        <span className="text-slate-600">Contato: {s.contactPerson}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEditSupplier(s)}
+                    title="Editar Fornecedor"
+                    className="p-1 rounded-lg hover:bg-slate-200 text-slate-700 transition-colors"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+              {suppliers.length === 0 && (
+                <div className="sm:col-span-2 text-center py-4 text-xs text-slate-400 italic">
+                  Nenhum fornecedor cadastrado. Clique em "+ Novo Fornecedor" para adicionar.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Right Column: Backup & Test Utilities (1 col) */}
@@ -939,6 +1238,202 @@ export const ConfigView: React.FC = () => {
                 Restaurar Backup
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Cadastrar/Editar Entregador */}
+      {showDeliveryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+                  <Truck className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold text-slate-900 text-sm">
+                  {editingDeliveryId ? 'Editar Entregador' : 'Cadastrar Novo Entregador'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDeliveryModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveDelivery} className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Nome do Entregador *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: João da Moto"
+                  value={deliveryName}
+                  onChange={(e) => setDeliveryName(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Telefone / WhatsApp <span className="text-slate-400 font-normal">(Opcional)</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="(89) 9 9999 - 9999"
+                  value={deliveryPhone}
+                  onChange={(e) => setDeliveryPhone(maskPhone(e.target.value))}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Veículo de Entrega (Opcional)
+                </label>
+                <select
+                  value={deliveryVehicle}
+                  onChange={(e) => setDeliveryVehicle(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 font-medium bg-white"
+                >
+                  <option value="Moto">Moto</option>
+                  <option value="Triciclo">Triciclo com Caçamba</option>
+                  <option value="Carro">Carro / Fiorino</option>
+                  <option value="Bicicleta">Bicicleta</option>
+                  <option value="Outro">Outro</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="delivery-active-check"
+                  checked={deliveryIsActive}
+                  onChange={(e) => setDeliveryIsActive(e.target.checked)}
+                  className="w-4 h-4 rounded text-amber-500 focus:ring-amber-400 border-slate-300"
+                />
+                <label htmlFor="delivery-active-check" className="font-semibold text-slate-800 text-xs cursor-pointer">
+                  Entregador Ativo (Disponível para rotas)
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowDeliveryModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-xl shadow-xs"
+                >
+                  Salvar Entregador
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Cadastrar/Editar Fornecedor */}
+      {showSupplierModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                  <Boxes className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold text-slate-900 text-sm">
+                  {editingSupplierId ? 'Editar Fornecedor' : 'Cadastrar Novo Fornecedor'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSupplierModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSupplier} className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Nome do Fornecedor / Distribuidora *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Ultragaz Distribuidora Regional"
+                  value={supplierName}
+                  onChange={(e) => setSupplierName(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Telefone / WhatsApp <span className="text-slate-400 font-normal">(Opcional)</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="(89) 9 9999 - 9999"
+                  value={supplierPhone}
+                  onChange={(e) => setSupplierPhone(maskPhone(e.target.value))}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Pessoa de Contato / Representante (Opcional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Marcos Vendas"
+                  value={supplierContact}
+                  onChange={(e) => setSupplierContact(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Produtos Fornecidos (Opcional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: GLP P13, P45, Vasilhames, Água 20L"
+                  value={supplierProducts}
+                  onChange={(e) => setSupplierProducts(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 font-medium"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowSupplierModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs"
+                >
+                  Salvar Fornecedor
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -19,6 +19,7 @@ import {
 import {
   getStoredSupabaseConfig,
   saveStoredSupabaseConfig,
+  getSupabaseKeyProblem,
   testSupabaseConnection,
   SUPABASE_SCHEMA_SQL,
 } from '../lib/supabase';
@@ -63,6 +64,13 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
 
     const cleanUrl = url.trim();
     const cleanKey = anonKey.trim();
+
+    const keyProblem = getSupabaseKeyProblem(cleanKey);
+    if (keyProblem) {
+      setTesting(false);
+      setTestResult({ success: false, message: keyProblem });
+      return;
+    }
 
     saveStoredSupabaseConfig(cleanUrl, cleanKey);
     const result = await testSupabaseConnection(cleanUrl, cleanKey);

@@ -39,6 +39,7 @@ import {
   DEFAULT_SETTINGS,
 } from '../data/initialData';
 import { generateNextCode } from '../utils/formatters';
+import { normalizePayments, summarizePayments, describePayments, round2 } from '../lib/payments';
 import {
   getSupabaseClient,
   getStoredSupabaseConfig,
@@ -117,6 +118,8 @@ interface ErpContextType {
     deliveryPhone?: string;
     payments?: PaymentSplit[];
     returnedCylinders?: number;
+    /** Vazios devolvidos por produto (troca). Se omitido, considera troca completa. */
+    returnedByProduct?: Record<string, number>;
     notes?: string;
   }) => { success: boolean; error?: string; saleId?: string };
   updateDeliveryStatus: (saleId: string, status: 'em_entrega' | 'aguardando_finalizacao') => void;
@@ -124,6 +127,7 @@ interface ErpContextType {
     saleId: string,
     params: {
       returnedCylinders: number;
+      returnedByProduct?: Record<string, number>;
       payments: PaymentSplit[];
       clientId?: string;
       notes?: string;
@@ -647,6 +651,179 @@ export function ErpProvider({ children }: { children: ReactNode }) {
   };
 
   // 2. CREATE SALE (Balcão ou Delivery)
+  /**
+   * Distribui os vasilhames vazios devolvidos entre os produtos de botijão da venda.
+   * - Com `byProduct`: usa o informado por produto.
+   * - Com `total`: preenche produto a produto até a quantidade vendida.
+   * - Sem nada: troca completa (cada botijão vendido devolve um vazio).
+   */
+  const allocateReturns = (
+    items: SaleItem[],
+    byProduct?: Record<string, number>,
+    total?: number
+  ): Record<string, number> => {
+    const result: Record<string, number> = {};
+    const cylinders = items.filter((i) => i.isCylinder);
+    if (byProduct) {
+      for (const item of cylinders) {
+        result[item.productId] = Math.max(0, Math.floor(Number(byProduct[item.productId]) || 0));
+      }
+      return result;
+    }
+    if (total === undefined) {
+      for (const item of cylinders) result[item.productId] = item.quantity;
+      return result;
+    }
+    let left = Math.max(0, Math.floor(total));
+    for (const item of cylinders) {
+      const take = Math.min(left, item.quantity);
+      result[item.productId] = take;
+      left -= take;
+    }
+    if (left > 0 && cylinders[0]) result[cylinders[0].productId] += left;
+    return result;
+  };
+
+  /**
+   * Aplica variações de estoque (cheios/vazios) de forma síncrona: calcula a partir do estado
+   * atual, grava no Supabase e devolve as movimentações. Evita gravar estoque desatualizado.
+   */
+  const applyStockDeltas = (
+    deltas: { productId: string; productName: string; full?: number; empty?: number; isCylinder: boolean }[],
+    meta: { timestamp: string; origin: string; saleId?: string; outType: StockMovement['type']; inType: StockMovement['type'] }
+  ): StockMovement[] => {
+    const working: Record<string, StockItem> = {};
+    const movements: StockMovement[] = [];
+    let seq = 0;
+    const getItem = (productId: string): StockItem =>
+      working[productId] ||
+      stock[productId] || { productId, fullQuantity: 0, emptyQuantity: 0, lastUpdated: meta.timestamp };
+
+    for (const d of deltas) {
+      const current = getItem(d.productId);
+      let { fullQuantity, emptyQuantity } = current;
+
+      if (d.full) {
+        const prev = fullQuantity;
+        fullQuantity = Math.max(0, fullQuantity + d.full);
+        movements.push({
+          id: `sm-${Date.now()}-${seq++}-${d.productId}`,
+          timestamp: meta.timestamp,
+          productId: d.productId,
+          productName: d.productName,
+          quantity: Math.abs(d.full),
+          stockType: d.isCylinder ? 'cheio' : 'unitario',
+          direction: d.full > 0 ? 'entrada' : 'saida',
+          type: d.full > 0 ? meta.inType : meta.outType,
+          origin: meta.origin,
+          relatedSaleId: meta.saleId,
+          previousQty: prev,
+          newQty: fullQuantity,
+        });
+      }
+      if (d.empty) {
+        const prev = emptyQuantity;
+        emptyQuantity = Math.max(0, emptyQuantity + d.empty);
+        movements.push({
+          id: `sm-${Date.now()}-${seq++}-${d.productId}-v`,
+          timestamp: meta.timestamp,
+          productId: d.productId,
+          productName: d.productName,
+          quantity: Math.abs(d.empty),
+          stockType: 'vazio',
+          direction: d.empty > 0 ? 'entrada' : 'saida',
+          type: d.empty > 0 ? (meta.inType === 'cancelamento' ? 'cancelamento' : 'retorno_vasilhame') : meta.outType,
+          origin: meta.origin,
+          relatedSaleId: meta.saleId,
+          previousQty: prev,
+          newQty: emptyQuantity,
+        });
+      }
+      working[d.productId] = { ...current, fullQuantity, emptyQuantity, lastUpdated: meta.timestamp };
+    }
+
+    const updatedItems = Object.values(working);
+    if (updatedItems.length > 0) {
+      setStock((prev) => ({ ...prev, ...working }));
+      setStockMovements((prev) => [...movements, ...prev]);
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        supabase.from('stock').upsert(updatedItems.map(mapStockToDb)).then(({ error }) => {
+          if (error) console.error('Erro ao gravar estoque:', error.message);
+        });
+        if (movements.length > 0) {
+          supabase.from('stock_movements').insert(movements.map(mapStockMovementToDb)).then();
+        }
+      }
+    }
+    return movements;
+  };
+
+  /** Lança no caixa aberto uma entrada por forma de pagamento (exceto fiado). */
+  const registerSaleInCash = (
+    normalizedPayments: PaymentSplit[],
+    meta: { timestamp: string; description: string; saleId: string }
+  ) => {
+    if (!cashRegister || cashRegister.status !== 'aberto') return;
+    const cashPayments = normalizedPayments.filter((p) => p.method !== 'fiado' && p.amount > 0);
+    if (cashPayments.length === 0) return;
+
+    const moves: CashMovement[] = cashPayments.map((p, i) => ({
+      id: `cm-${Date.now()}-${i}-${p.method}`,
+      cashRegisterId: cashRegister.id,
+      timestamp: meta.timestamp,
+      type: 'venda',
+      amount: p.amount,
+      method: p.method,
+      description: cashPayments.length > 1 ? `${meta.description} (pagamento dividido)` : meta.description,
+      relatedSaleId: meta.saleId,
+    }));
+    const received = round2(cashPayments.reduce((s, p) => s + p.amount, 0));
+    const updatedRegister: CashRegister = {
+      ...cashRegister,
+      currentBalance: round2(cashRegister.currentBalance + received),
+    };
+    setCashMovements((prev) => [...moves, ...prev]);
+    setCashRegister(updatedRegister);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('cash_movements').insert(moves.map(mapCashMovementToDb)).then();
+      supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+    }
+  };
+
+  const createReceivableForSale = (params: {
+    saleId: string;
+    saleNumber: number;
+    amount: number;
+    clientId?: string;
+    clientName: string;
+    clientPhone?: string;
+    timestamp: string;
+  }) => {
+    const newReceivable: AccountReceivable = {
+      id: `rec-${Date.now()}`,
+      saleId: params.saleId,
+      saleNumber: params.saleNumber,
+      clientId: params.clientId || 'cli-avulso',
+      clientName: params.clientName,
+      clientPhone: params.clientPhone,
+      totalAmount: params.amount,
+      paidAmount: 0,
+      remainingAmount: params.amount,
+      createdAt: params.timestamp,
+      dueDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
+      status: 'aberto',
+      paymentHistory: [],
+    };
+    setReceivables((prev) => [newReceivable, ...prev]);
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('receivables').insert(mapReceivableToDb(newReceivable)).then();
+    }
+  };
+
   const createSale = ({
     type,
     items: inputItems,
@@ -656,7 +833,8 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     deliveryNeighborhood,
     deliveryPhone,
     payments = [],
-    returnedCylinders = 0,
+    returnedCylinders,
+    returnedByProduct,
     notes,
   }: {
     type: SaleType;
@@ -668,6 +846,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     deliveryPhone?: string;
     payments?: PaymentSplit[];
     returnedCylinders?: number;
+    returnedByProduct?: Record<string, number>;
     notes?: string;
   }) => {
     if (!inputItems || inputItems.length === 0) {
@@ -678,7 +857,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const deliveryPerson = deliveryPersons.find((d) => d.id === deliveryPersonId);
     const supabase = getSupabaseClient();
 
-    // Build sale items with FROZEN unit cost at sale time
+    // Itens com custo CONGELADO no momento da venda
     const saleItems: SaleItem[] = [];
     let totalAmount = 0;
     let totalCost = 0;
@@ -686,171 +865,90 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
     for (const item of inputItems) {
       const prod = products.find((p) => p.id === item.productId);
-      if (!prod) continue;
+      if (!prod || item.quantity <= 0) continue;
       const unitPrice = item.unitPrice !== undefined ? Number(item.unitPrice) : prod.sellPrice;
-      const itemTotal = unitPrice * item.quantity;
-      const itemCostTotal = prod.costPrice * item.quantity;
-
+      const itemTotal = round2(unitPrice * item.quantity);
       totalAmount += itemTotal;
-      totalCost += itemCostTotal;
-
-      if (prod.isCylinder) {
-        dispatchedCylinders += item.quantity;
-      }
+      totalCost += prod.costPrice * item.quantity;
+      if (prod.isCylinder) dispatchedCylinders += item.quantity;
 
       saleItems.push({
         productId: prod.id,
         productName: prod.name,
         quantity: item.quantity,
-        unitCost: prod.costPrice, // REGRA CRÍTICA: guarda custo do momento da venda
+        unitCost: prod.costPrice,
         unitPrice,
         total: itemTotal,
         isCylinder: prod.isCylinder,
       });
     }
+    if (saleItems.length === 0) {
+      return { success: false, error: 'Nenhum produto válido no pedido.' };
+    }
 
-    const grossProfit = totalAmount - totalCost;
+    totalAmount = round2(totalAmount);
+    totalCost = round2(totalCost);
+    const grossProfit = round2(totalAmount - totalCost);
     const profitMargin = totalAmount > 0 ? (grossProfit / totalAmount) * 100 : 0;
     const nextSaleNumber = sales.length > 0 ? Math.max(...sales.map((s) => s.saleNumber)) + 1 : 1001;
     const saleId = `sale-${Date.now()}`;
     const timestamp = new Date().toISOString();
+    const normalizedPayments = normalizePayments(payments);
 
     if (type === 'balcao') {
-      // Venda Balcão: Finaliza imediatamente
-      const totalPaid = payments.filter((p) => p.method !== 'fiado').reduce((sum, p) => sum + p.amount, 0);
-      const fiadoPart = payments.find((p) => p.method === 'fiado')?.amount || 0;
-
-      if (totalPaid + fiadoPart < totalAmount - 0.01) {
+      // Venda Balcão: finaliza na hora
+      const summary = summarizePayments(normalizedPayments, totalAmount);
+      if (!summary.isBalanced) {
         return {
           success: false,
-          error: `O valor informado (${(totalPaid + fiadoPart).toFixed(2)}) é menor que o total da venda (${totalAmount.toFixed(2)}).`,
+          error:
+            summary.remaining > 0
+              ? `Faltam R$ ${summary.remaining.toFixed(2)} para fechar o pagamento da venda.`
+              : `O pagamento informado passa R$ ${(-summary.remaining).toFixed(2)} do total da venda.`,
         };
       }
+      if (summary.fiado > 0 && !client) {
+        return { success: false, error: 'Para vender no fiado, selecione ou cadastre o cliente.' };
+      }
 
-      // 1. Atualizar estoque
-      const updatedStockItems: StockItem[] = [];
-      setStock((prev) => {
-        const nextStock = { ...prev };
-        for (const item of saleItems) {
-          const current = nextStock[item.productId] || {
-            productId: item.productId,
-            fullQuantity: 0,
-            emptyQuantity: 0,
-            lastUpdated: timestamp,
-          };
+      // 1. Estoque: sai o cheio, entra o vazio devolvido na troca
+      const returns = allocateReturns(
+        saleItems,
+        returnedByProduct,
+        returnedByProduct ? undefined : returnedCylinders
+      );
+      const finalItems = saleItems.map((i) => (i.isCylinder ? { ...i, returnedQuantity: returns[i.productId] || 0 } : i));
+      const totalReturned = Object.values(returns).reduce((a, b) => a + b, 0);
 
-          const newFull = Math.max(0, current.fullQuantity - item.quantity);
-          const newEmpty = item.isCylinder
-            ? current.emptyQuantity + (returnedCylinders > 0 ? returnedCylinders : item.quantity)
-            : current.emptyQuantity;
+      applyStockDeltas(
+        finalItems.map((i) => ({
+          productId: i.productId,
+          productName: i.productName,
+          isCylinder: i.isCylinder,
+          full: -i.quantity,
+          empty: i.isCylinder ? i.returnedQuantity || 0 : 0,
+        })),
+        { timestamp, origin: `Venda Balcão #${nextSaleNumber}`, saleId, outType: 'venda', inType: 'retorno_vasilhame' }
+      );
 
-          const updatedItem = {
-            ...current,
-            fullQuantity: newFull,
-            emptyQuantity: newEmpty,
-            lastUpdated: timestamp,
-          };
-          nextStock[item.productId] = updatedItem;
-          updatedStockItems.push(updatedItem);
-        }
-        return nextStock;
+      // 2. Caixa (uma entrada por forma de pagamento)
+      registerSaleInCash(normalizedPayments, {
+        timestamp,
+        description: `Venda Balcão #${nextSaleNumber} (${client?.name || 'Balcão'})`,
+        saleId,
       });
 
-      if (supabase && updatedStockItems.length > 0) {
-        supabase.from('stock').upsert(updatedStockItems.map(mapStockToDb)).then();
-      }
-
-      // 2. Movimentações de estoque
-      const newMovements: StockMovement[] = [];
-      for (const item of saleItems) {
-        newMovements.push({
-          id: `sm-${Date.now()}-${item.productId}-out`,
-          timestamp,
-          productId: item.productId,
-          productName: item.productName,
-          quantity: item.quantity,
-          stockType: item.isCylinder ? 'cheio' : 'unitario',
-          direction: 'saida',
-          type: 'venda',
-          origin: `Venda Balcão #${nextSaleNumber}`,
-          relatedSaleId: saleId,
-          previousQty: stock[item.productId]?.fullQuantity || 0,
-          newQty: Math.max(0, (stock[item.productId]?.fullQuantity || 0) - item.quantity),
-        });
-
-        if (item.isCylinder) {
-          const returned = returnedCylinders > 0 ? returnedCylinders : item.quantity;
-          newMovements.push({
-            id: `sm-${Date.now()}-${item.productId}-in`,
-            timestamp,
-            productId: item.productId,
-            productName: item.productName,
-            quantity: returned,
-            stockType: 'vazio',
-            direction: 'entrada',
-            type: 'retorno_vasilhame',
-            origin: `Retorno Venda #${nextSaleNumber}`,
-            relatedSaleId: saleId,
-            previousQty: stock[item.productId]?.emptyQuantity || 0,
-            newQty: (stock[item.productId]?.emptyQuantity || 0) + returned,
-          });
-        }
-      }
-      setStockMovements((prev) => [...newMovements, ...prev]);
-      if (supabase && newMovements.length > 0) {
-        supabase.from('stock_movements').insert(newMovements.map(mapStockMovementToDb)).then();
-      }
-
-      // 3. Pagamentos no Caixa
-      if (cashRegister && cashRegister.status === 'aberto') {
-        const validCashPayments = payments.filter((p) => p.method !== 'fiado' && p.amount > 0);
-        if (validCashPayments.length > 0) {
-          const newCashMoves: CashMovement[] = validCashPayments.map((p) => ({
-            id: `cm-${Date.now()}-${p.method}`,
-            cashRegisterId: cashRegister.id,
-            timestamp,
-            type: 'venda',
-            amount: p.amount,
-            method: p.method,
-            description: `Venda Balcão #${nextSaleNumber} (${client?.name || 'Balcão'})`,
-            relatedSaleId: saleId,
-          }));
-
-          setCashMovements((prev) => [...newCashMoves, ...prev]);
-          const updatedCashRegister: CashRegister = {
-            ...cashRegister,
-            currentBalance: cashRegister.currentBalance + totalPaid,
-          };
-          setCashRegister(updatedCashRegister);
-
-          if (supabase) {
-            supabase.from('cash_movements').insert(newCashMoves.map(mapCashMovementToDb)).then();
-            supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedCashRegister)).then();
-          }
-        }
-      }
-
-      // 4. Se houver fiado, gera conta a receber
-      if (fiadoPart > 0) {
-        const newReceivable: AccountReceivable = {
-          id: `rec-${Date.now()}`,
+      // 3. Fiado vira conta a receber
+      if (summary.fiado > 0) {
+        createReceivableForSale({
           saleId,
           saleNumber: nextSaleNumber,
-          clientId: client?.id || 'cli-avulso',
+          amount: summary.fiado,
+          clientId: client?.id,
           clientName: client?.name || 'Cliente Balcão Fiado',
           clientPhone: client?.phone,
-          totalAmount: fiadoPart,
-          paidAmount: 0,
-          remainingAmount: fiadoPart,
-          createdAt: timestamp,
-          dueDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
-          status: 'aberto',
-          paymentHistory: [],
-        };
-        setReceivables((prev) => [newReceivable, ...prev]);
-        if (supabase) {
-          supabase.from('receivables').insert(mapReceivableToDb(newReceivable)).then();
-        }
+          timestamp,
+        });
       }
 
       const newSale: Sale = {
@@ -865,16 +963,16 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         clientPhone: client?.phone,
         clientAddress: client?.address,
         clientNeighborhood: client?.neighborhood,
-        items: saleItems,
+        items: finalItems,
         totalAmount,
         totalCost,
         grossProfit,
         profitMargin,
         dispatchedCylinders,
-        returnedCylinders: returnedCylinders > 0 ? returnedCylinders : dispatchedCylinders,
-        payments,
-        paidAmount: totalPaid,
-        fiadoAmount: fiadoPart,
+        returnedCylinders: totalReturned,
+        payments: normalizedPayments,
+        paidAmount: summary.paid,
+        fiadoAmount: summary.fiado,
         notes,
       };
 
@@ -883,103 +981,72 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         supabase.from('sales').insert(mapSaleToDb(newSale)).then();
       }
 
+      const missing = dispatchedCylinders - totalReturned;
       addAuditLog(
         `Venda Balcão #${nextSaleNumber} finalizada`,
         'venda',
-        `Valor: R$ ${totalAmount.toFixed(2)} | Recebido: R$ ${totalPaid.toFixed(2)} | Fiado: R$ ${fiadoPart.toFixed(2)}`,
-        { saleId }
-      );
-
-      return { success: true, saleId };
-    } else {
-      // Venda Delivery:
-      // Diminui botijões cheios do estoque (saíram para entrega)
-      const updatedStockItems: StockItem[] = [];
-      setStock((prev) => {
-        const nextStock = { ...prev };
-        for (const item of saleItems) {
-          const current = nextStock[item.productId] || {
-            productId: item.productId,
-            fullQuantity: 0,
-            emptyQuantity: 0,
-            lastUpdated: timestamp,
-          };
-          const newFull = Math.max(0, current.fullQuantity - item.quantity);
-          const updatedItem = {
-            ...current,
-            fullQuantity: newFull,
-            lastUpdated: timestamp,
-          };
-          nextStock[item.productId] = updatedItem;
-          updatedStockItems.push(updatedItem);
-        }
-        return nextStock;
-      });
-
-      if (supabase && updatedStockItems.length > 0) {
-        supabase.from('stock').upsert(updatedStockItems.map(mapStockToDb)).then();
-      }
-
-      // Movimentação de saída dos cheios
-      const newMovements: StockMovement[] = saleItems.map((item) => ({
-        id: `sm-${Date.now()}-${item.productId}-out`,
-        timestamp,
-        productId: item.productId,
-        productName: item.productName,
-        quantity: item.quantity,
-        stockType: item.isCylinder ? 'cheio' : 'unitario',
-        direction: 'saida',
-        type: 'venda',
-        origin: `Saída Delivery #${nextSaleNumber}`,
-        relatedSaleId: saleId,
-        previousQty: stock[item.productId]?.fullQuantity || 0,
-        newQty: Math.max(0, (stock[item.productId]?.fullQuantity || 0) - item.quantity),
-      }));
-      setStockMovements((prev) => [...newMovements, ...prev]);
-      if (supabase && newMovements.length > 0) {
-        supabase.from('stock_movements').insert(newMovements.map(mapStockMovementToDb)).then();
-      }
-
-      const newSale: Sale = {
-        id: saleId,
-        saleNumber: nextSaleNumber,
-        type: 'delivery',
-        status: 'pendente',
-        createdAt: timestamp,
-        clientId: client?.id,
-        clientName: client ? client.name : 'Consumidor Padrão',
-        clientPhone: client ? client.phone : (deliveryPhone || undefined),
-        clientAddress: client ? client.address : (deliveryAddress || undefined),
-        clientNeighborhood: client ? client.neighborhood : (deliveryNeighborhood || undefined),
-        deliveryPersonId: deliveryPerson?.id,
-        deliveryPersonName: deliveryPerson?.name,
-        items: saleItems,
-        totalAmount,
-        totalCost,
-        grossProfit,
-        profitMargin,
-        dispatchedCylinders,
-        returnedCylinders: 0,
-        payments: payments || [],
-        paidAmount: 0,
-        fiadoAmount: 0,
-        notes,
-      };
-
-      setSales((prev) => [newSale, ...prev]);
-      if (supabase) {
-        supabase.from('sales').insert(mapSaleToDb(newSale)).then();
-      }
-
-      addAuditLog(
-        `Venda Delivery #${nextSaleNumber} criada`,
-        'venda',
-        `Cliente: ${client?.name || 'Consumidor Padrão'} | Total: R$ ${totalAmount.toFixed(2)} | ${dispatchedCylinders} cheios saíram para entrega. Venda NÃO entrou no caixa.`,
+        `Valor: R$ ${totalAmount.toFixed(2)} | Pagamento: ${describePayments(normalizedPayments, (v) => `R$ ${v.toFixed(2)}`)}` +
+          (missing > 0 ? ` | ${missing} vasilhame(s) não devolvido(s) na troca` : ''),
         { saleId }
       );
 
       return { success: true, saleId };
     }
+
+    // Venda Delivery: cheios saem para entrega; o vazio volta na finalização
+    applyStockDeltas(
+      saleItems.map((i) => ({
+        productId: i.productId,
+        productName: i.productName,
+        isCylinder: i.isCylinder,
+        full: -i.quantity,
+      })),
+      { timestamp, origin: `Saída Delivery #${nextSaleNumber}`, saleId, outType: 'venda', inType: 'retorno_vasilhame' }
+    );
+
+    const newSale: Sale = {
+      id: saleId,
+      saleNumber: nextSaleNumber,
+      type: 'delivery',
+      status: 'pendente',
+      createdAt: timestamp,
+      clientId: client?.id,
+      clientName: client ? client.name : 'Consumidor Padrão',
+      clientPhone: client ? client.phone : deliveryPhone || undefined,
+      clientAddress: client ? client.address : deliveryAddress || undefined,
+      clientNeighborhood: client ? client.neighborhood : deliveryNeighborhood || undefined,
+      deliveryPersonId: deliveryPerson?.id,
+      deliveryPersonName: deliveryPerson?.name,
+      items: saleItems,
+      totalAmount,
+      totalCost,
+      grossProfit,
+      profitMargin,
+      dispatchedCylinders,
+      returnedCylinders: 0,
+      // Forma combinada com o cliente (confirmada na finalização)
+      payments: normalizedPayments,
+      paidAmount: 0,
+      fiadoAmount: 0,
+      notes,
+    };
+
+    setSales((prev) => [newSale, ...prev]);
+    if (supabase) {
+      supabase.from('sales').insert(mapSaleToDb(newSale)).then();
+    }
+
+    addAuditLog(
+      `Venda Delivery #${nextSaleNumber} criada`,
+      'venda',
+      `Cliente: ${newSale.clientName} | Total: R$ ${totalAmount.toFixed(2)} | Previsto: ${describePayments(
+        normalizedPayments,
+        (v) => `R$ ${v.toFixed(2)}`
+      )} | ${dispatchedCylinders} cheio(s) saíram para entrega. Ainda não entrou no caixa.`,
+      { saleId }
+    );
+
+    return { success: true, saleId };
   };
 
   // 3. UPDATE DELIVERY STATUS
@@ -1010,11 +1077,13 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     saleId: string,
     {
       returnedCylinders,
+      returnedByProduct,
       payments,
       clientId,
       notes,
     }: {
       returnedCylinders: number;
+      returnedByProduct?: Record<string, number>;
       payments: PaymentSplit[];
       clientId?: string;
       notes?: string;
@@ -1027,146 +1096,87 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     if (sale.status === 'finalizada') {
       return { success: false, error: 'Esta venda já foi finalizada anteriormente.' };
     }
-
-    const totalPaid = payments.filter((p) => p.method !== 'fiado').reduce((sum, p) => sum + p.amount, 0);
-    const fiadoPart = payments.find((p) => p.method === 'fiado')?.amount || 0;
-
-    // Se houver fiado, é obrigatório cliente vinculado
-    const targetClientId = clientId || sale.clientId;
-    const linkedClient = targetClientId ? clients.find((c) => c.id === targetClientId) : undefined;
-    if (fiadoPart > 0 && !targetClientId) {
-      return {
-        success: false,
-        error: 'Para pagamento em FIADO (Contas a Receber), é obrigatório selecionar um cliente cadastrado.',
-      };
+    if (sale.status === 'cancelada') {
+      return { success: false, error: 'Esta venda foi cancelada.' };
     }
 
-    if (Math.abs(totalPaid + fiadoPart - sale.totalAmount) > 0.05) {
+    const normalizedPayments = normalizePayments(payments);
+    const summary = summarizePayments(normalizedPayments, sale.totalAmount);
+
+    const targetClientId = clientId || sale.clientId;
+    const linkedClient = targetClientId ? clients.find((c) => c.id === targetClientId) : undefined;
+    if (summary.fiado > 0 && !linkedClient) {
       return {
         success: false,
-        error: `O total pago (R$ ${totalPaid.toFixed(2)}) + fiado (R$ ${fiadoPart.toFixed(2)}) não bate com o total da venda (R$ ${sale.totalAmount.toFixed(2)}).`,
+        error: 'Para lançar FIADO (Contas a Receber), é obrigatório selecionar um cliente cadastrado.',
+      };
+    }
+    if (!summary.isBalanced) {
+      return {
+        success: false,
+        error:
+          summary.remaining > 0
+            ? `Faltam R$ ${summary.remaining.toFixed(2)} para fechar o pagamento.`
+            : `O pagamento informado passa R$ ${(-summary.remaining).toFixed(2)} do total da venda.`,
       };
     }
 
     const timestamp = new Date().toISOString();
     const supabase = getSupabaseClient();
 
-    // 1. Atualiza estoque com os vasilhames retornados
-    if (returnedCylinders > 0) {
-      const cylinderItem = sale.items.find((i) => i.isCylinder) || sale.items[0];
-      if (cylinderItem) {
-        let updatedItem: StockItem | null = null;
-        setStock((prev) => {
-          const current = prev[cylinderItem.productId] || {
-            productId: cylinderItem.productId,
-            fullQuantity: 0,
-            emptyQuantity: 0,
-            lastUpdated: timestamp,
-          };
-          updatedItem = {
-            ...current,
-            emptyQuantity: current.emptyQuantity + returnedCylinders,
-            lastUpdated: timestamp,
-          };
-          return {
-            ...prev,
-            [cylinderItem.productId]: updatedItem,
-          };
-        });
+    // 1. Vazios devolvidos voltam ao estoque, por produto
+    const returns = allocateReturns(sale.items, returnedByProduct, returnedByProduct ? undefined : returnedCylinders);
+    const finalItems = sale.items.map((i) => (i.isCylinder ? { ...i, returnedQuantity: returns[i.productId] || 0 } : i));
+    const totalReturned = Object.values(returns).reduce((a, b) => a + b, 0);
 
-        if (supabase && updatedItem) {
-          supabase.from('stock').upsert(mapStockToDb(updatedItem)).then();
-        }
+    applyStockDeltas(
+      finalItems
+        .filter((i) => i.isCylinder && (i.returnedQuantity || 0) > 0)
+        .map((i) => ({
+          productId: i.productId,
+          productName: i.productName,
+          isCylinder: true,
+          empty: i.returnedQuantity || 0,
+        })),
+      { timestamp, origin: `Retorno Delivery #${sale.saleNumber}`, saleId, outType: 'venda', inType: 'retorno_vasilhame' }
+    );
 
-        const returnMovement: StockMovement = {
-          id: `sm-${Date.now()}-return`,
-          timestamp,
-          productId: cylinderItem.productId,
-          productName: cylinderItem.productName,
-          quantity: returnedCylinders,
-          stockType: 'vazio',
-          direction: 'entrada',
-          type: 'retorno_vasilhame',
-          origin: `Retorno Delivery #${sale.saleNumber}`,
-          relatedSaleId: saleId,
-          previousQty: stock[cylinderItem.productId]?.emptyQuantity || 0,
-          newQty: (stock[cylinderItem.productId]?.emptyQuantity || 0) + returnedCylinders,
-        };
+    // 2. Recebimentos no caixa (uma entrada por forma)
+    const clientDisplayName = linkedClient?.name || sale.clientName || 'Consumidor Padrão';
+    registerSaleInCash(normalizedPayments, {
+      timestamp,
+      description: `Entrega #${sale.saleNumber} - ${clientDisplayName}`,
+      saleId,
+    });
 
-        setStockMovements((prev) => [returnMovement, ...prev]);
-        if (supabase) {
-          supabase.from('stock_movements').insert(mapStockMovementToDb(returnMovement)).then();
-        }
-      }
-    }
-
-    // 2. Registra recebimentos no caixa
-    if (cashRegister && cashRegister.status === 'aberto') {
-      const validCashPayments = payments.filter((p) => p.method !== 'fiado' && p.amount > 0);
-      if (validCashPayments.length > 0) {
-        const clientDisplayName = linkedClient?.name || sale.clientName || 'Consumidor Padrão';
-        const newCashMoves: CashMovement[] = validCashPayments.map((p) => ({
-          id: `cm-${Date.now()}-${p.method}`,
-          cashRegisterId: cashRegister.id,
-          timestamp,
-          type: 'venda',
-          amount: p.amount,
-          method: p.method,
-          description: `Entrega #${sale.saleNumber} - ${clientDisplayName}`,
-          relatedSaleId: saleId,
-        }));
-
-        setCashMovements((prev) => [...newCashMoves, ...prev]);
-        const updatedCashRegister: CashRegister = {
-          ...cashRegister,
-          currentBalance: cashRegister.currentBalance + totalPaid,
-        };
-        setCashRegister(updatedCashRegister);
-
-        if (supabase) {
-          supabase.from('cash_movements').insert(newCashMoves.map(mapCashMovementToDb)).then();
-          supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedCashRegister)).then();
-        }
-      }
-    }
-
-    // 3. Se houver valor fiado, gera conta a receber
-    if (fiadoPart > 0) {
-      const newReceivable: AccountReceivable = {
-        id: `rec-${Date.now()}`,
+    // 3. Fiado vira conta a receber
+    if (summary.fiado > 0) {
+      createReceivableForSale({
         saleId,
         saleNumber: sale.saleNumber,
-        clientId: targetClientId || 'cli-avulso',
+        amount: summary.fiado,
+        clientId: targetClientId,
         clientName: linkedClient?.name || sale.clientName || 'Consumidor Padrão (Fiado)',
         clientPhone: linkedClient?.phone || sale.clientPhone,
-        totalAmount: fiadoPart,
-        paidAmount: 0,
-        remainingAmount: fiadoPart,
-        createdAt: timestamp,
-        dueDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
-        status: 'aberto',
-        paymentHistory: [],
-      };
-      setReceivables((prev) => [newReceivable, ...prev]);
-      if (supabase) {
-        supabase.from('receivables').insert(mapReceivableToDb(newReceivable)).then();
-      }
+        timestamp,
+      });
     }
 
-    // 4. Marca venda como finalizada
+    // 4. Venda finalizada
     const updatedSale: Sale = {
       ...sale,
       status: 'finalizada',
       finalizedAt: timestamp,
+      items: finalItems,
       clientId: targetClientId || sale.clientId,
       clientName: linkedClient ? linkedClient.name : sale.clientName,
       clientPhone: linkedClient?.phone || sale.clientPhone,
       clientAddress: linkedClient?.address || sale.clientAddress,
       clientNeighborhood: linkedClient?.neighborhood || sale.clientNeighborhood,
-      returnedCylinders,
-      payments,
-      paidAmount: totalPaid,
-      fiadoAmount: fiadoPart,
+      returnedCylinders: totalReturned,
+      payments: normalizedPayments,
+      paidAmount: summary.paid,
+      fiadoAmount: summary.fiado,
       notes: notes ? (sale.notes ? `${sale.notes} | ${notes}` : notes) : sale.notes,
     };
 
@@ -1175,10 +1185,12 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       supabase.from('sales').upsert(mapSaleToDb(updatedSale)).then();
     }
 
+    const missing = sale.dispatchedCylinders - totalReturned;
     addAuditLog(
       `Venda Delivery #${sale.saleNumber} finalizada`,
       'venda',
-      `Total: R$ ${sale.totalAmount.toFixed(2)} | Recebido Caixa: R$ ${totalPaid.toFixed(2)} | Fiado: R$ ${fiadoPart.toFixed(2)} | Vasilhames Retornados: ${returnedCylinders}`,
+      `Total: R$ ${sale.totalAmount.toFixed(2)} | Pagamento: ${describePayments(normalizedPayments, (v) => `R$ ${v.toFixed(2)}`)} | Vazios devolvidos: ${totalReturned} de ${sale.dispatchedCylinders}` +
+        (missing > 0 ? ` | ATENÇÃO: ${missing} vasilhame(s) não retornaram` : ''),
       { saleId }
     );
 
@@ -1194,73 +1206,64 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const timestamp = new Date().toISOString();
     const supabase = getSupabaseClient();
 
-    // Reverter estoque
-    const updatedStockItems: StockItem[] = [];
-    setStock((prev) => {
-      const nextStock = { ...prev };
-      for (const item of sale.items) {
-        const current = nextStock[item.productId];
-        if (!current) continue;
+    // Reverter estoque: o cheio volta; o vazio recebido na troca sai
+    const legacyReturns =
+      sale.status === 'finalizada'
+        ? allocateReturns(sale.items, undefined, sale.returnedCylinders || 0)
+        : {};
+    applyStockDeltas(
+      sale.items.map((i) => ({
+        productId: i.productId,
+        productName: i.productName,
+        isCylinder: i.isCylinder,
+        full: i.quantity,
+        empty:
+          sale.status === 'finalizada' && i.isCylinder
+            ? -(i.returnedQuantity ?? legacyReturns[i.productId] ?? 0)
+            : 0,
+      })),
+      { timestamp, origin: `Cancelamento Venda #${sale.saleNumber}`, saleId, outType: 'cancelamento', inType: 'cancelamento' }
+    );
 
-        let newFull = current.fullQuantity;
-        let newEmpty = current.emptyQuantity;
-
-        if (sale.status !== 'cancelada') {
-          newFull += item.quantity;
-        }
-
-        if (sale.status === 'finalizada' && item.isCylinder && sale.returnedCylinders > 0) {
-          newEmpty = Math.max(0, newEmpty - sale.returnedCylinders);
-        }
-
-        const updated = {
-          ...current,
-          fullQuantity: newFull,
-          emptyQuantity: newEmpty,
-          lastUpdated: timestamp,
-        };
-        nextStock[item.productId] = updated;
-        updatedStockItems.push(updated);
-      }
-      return nextStock;
-    });
-
-    if (supabase && updatedStockItems.length > 0) {
-      supabase.from('stock').upsert(updatedStockItems.map(mapStockToDb)).then();
-    }
-
-    // Se a venda já estava finalizada, estorna pagamentos do caixa
+    // Se a venda já estava finalizada, estorna do caixa cada forma recebida
     if (sale.status === 'finalizada' && sale.paidAmount > 0 && cashRegister) {
-      const reverseMove: CashMovement = {
-        id: `cm-rev-${Date.now()}`,
+      const received = normalizePayments(sale.payments || []).filter((p) => p.method !== 'fiado');
+      const reversals: PaymentSplit[] = received.length > 0 ? received : [{ method: 'dinheiro', amount: sale.paidAmount }];
+      const reverseMoves: CashMovement[] = reversals.map((p, i): CashMovement => ({
+        id: `cm-rev-${Date.now()}-${i}`,
         cashRegisterId: cashRegister.id,
         timestamp,
         type: 'saida',
-        amount: sale.paidAmount,
-        method: 'dinheiro',
-        description: `Estorno de cancelamento da Venda #${sale.saleNumber}`,
+        amount: p.amount,
+        method: p.method,
+        description: `Estorno do cancelamento da Venda #${sale.saleNumber}`,
         relatedSaleId: saleId,
-      };
-      setCashMovements((prev) => [reverseMove, ...prev]);
+      }));
+      const totalReversed = round2(reverseMoves.reduce((s, m) => s + m.amount, 0));
+      setCashMovements((prev) => [...reverseMoves, ...prev]);
       const updatedRegister: CashRegister = {
         ...cashRegister,
-        currentBalance: cashRegister.currentBalance - sale.paidAmount,
+        currentBalance: round2(cashRegister.currentBalance - totalReversed),
       };
       setCashRegister(updatedRegister);
 
       if (supabase) {
-        supabase.from('cash_movements').insert(mapCashMovementToDb(reverseMove)).then();
+        supabase.from('cash_movements').insert(reverseMoves.map(mapCashMovementToDb)).then();
         supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
       }
     }
 
-    // Se gerou conta a receber fiada, cancela a conta
+    // Se gerou fiado, encerra a conta a receber
     if (sale.fiadoAmount > 0) {
       setReceivables((prev) =>
         prev.map((r) => (r.saleId === saleId ? { ...r, status: 'pago', remainingAmount: 0 } : r))
       );
       if (supabase) {
-        supabase.from('receivables').update({ status: 'pago', remainingAmount: 0, updated_at: timestamp }).eq('sale_id', saleId).then();
+        supabase
+          .from('receivables')
+          .update({ status: 'pago', remaining_amount: 0, updated_at: timestamp })
+          .eq('sale_id', saleId)
+          .then();
       }
     }
 

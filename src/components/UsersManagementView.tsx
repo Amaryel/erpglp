@@ -18,7 +18,7 @@ import {
   Sparkles,
   Search,
 } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, MIN_PASSWORD_LENGTH } from '../context/AuthContext';
 import { AppUser, UserRole, UserStatus } from '../types';
 import { formatDate } from '../utils/formatters';
 
@@ -73,7 +73,7 @@ export const UsersManagementView: React.FC = () => {
         username: newUsername,
         name: newName,
         role: newRole,
-        password: newPassword || undefined,
+        password: newPassword,
       });
       if (res.success) {
         setIsCreateOpen(false);
@@ -192,6 +192,162 @@ export const UsersManagementView: React.FC = () => {
     }
   };
 
+  const roleLabel = (role: UserRole) =>
+    role === 'superadmin' ? 'Superadmin' : role === 'admin' ? 'Administrador' : role === 'entregador' ? 'Entregador' : 'Operador';
+
+  const renderIdentity = (u: AppUser) => {
+    const isSuper = u.role === 'superadmin';
+    const isMe = currentUser?.id === u.id;
+    return (
+      <div className="flex items-center gap-2.5 min-w-0">
+        <div
+          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+            isSuper ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-slate-100 text-slate-700'
+          }`}
+        >
+          {isSuper ? <Shield className="w-4 h-4 text-amber-600" /> : <User className="w-4 h-4" />}
+        </div>
+        <div className="min-w-0">
+          <div className="font-bold text-sm md:text-xs text-slate-900 flex items-center gap-1.5">
+            <span className="truncate">{u.name}</span>
+            {isMe && (
+              <span className="text-[10px] font-bold px-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded shrink-0">
+                Você
+              </span>
+            )}
+          </div>
+          <div className="text-[11px] font-mono text-slate-500 truncate">@{u.username}</div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderRole = (u: AppUser) => (
+    <span
+      className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${
+        u.role === 'superadmin'
+          ? 'bg-amber-100 text-amber-900 border border-amber-300'
+          : u.role === 'admin'
+          ? 'bg-blue-100 text-blue-900 border border-blue-200'
+          : 'bg-slate-100 text-slate-700 border border-slate-200'
+      }`}
+    >
+      {roleLabel(u.role)}
+    </span>
+  );
+
+  const renderStatus = (u: AppUser) => {
+    const isBlocked = u.status === 'bloqueado';
+    return (
+      <div className="flex flex-col items-end md:items-start gap-1 shrink-0">
+        <span
+          className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full ${
+            isBlocked ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+          }`}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${isBlocked ? 'bg-red-500' : 'bg-emerald-500'}`} />
+          <span>{isBlocked ? 'Bloqueado' : 'Ativo'}</span>
+        </span>
+        {!u.hasDefinedPassword && (
+          <span className="text-[10px] font-bold text-amber-700" title="Defina uma senha para liberar o acesso">
+            Senha pendente
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  const renderLastAccess = (u: AppUser) =>
+    u.lastLoginAt ? (
+      <span className="inline-flex items-center gap-1">
+        <Clock className="w-3.5 h-3.5 text-slate-400" />
+        <span>{formatDate(u.lastLoginAt)}</span>
+      </span>
+    ) : (
+      <span className="text-slate-400 italic">Nunca acessou</span>
+    );
+
+  /** Ações permitidas: as mesmas regras são validadas novamente no servidor. */
+  const renderActions = (u: AppUser, mobile: boolean) => {
+    const isSuper = u.role === 'superadmin';
+    const isBlocked = u.status === 'bloqueado';
+    const base = mobile
+      ? 'h-10 px-3 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-colors'
+      : 'h-8 min-w-8 px-2 rounded-lg border text-xs font-bold flex items-center justify-center gap-1 transition-colors';
+
+    if (isSuper && !isSuperadmin) {
+      return (
+        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
+          <Lock className="w-3 h-3 text-amber-600" />
+          <span>Protegido (Superadmin)</span>
+        </span>
+      );
+    }
+
+    return (
+      <>
+        {isSuperadmin && !isSuper && (
+          <button
+            onClick={() => handleToggleBlock(u)}
+            title={isBlocked ? 'Desbloquear Usuário' : 'Bloquear Usuário'}
+            className={`${base} ${
+              isBlocked
+                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300'
+                : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200'
+            }`}
+          >
+            {isBlocked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+            <span className={mobile ? '' : 'hidden lg:inline'}>{isBlocked ? 'Desbloquear' : 'Bloquear'}</span>
+          </button>
+        )}
+
+        <button
+          onClick={() => {
+            setSelectedUser(u);
+            setResetPasswordValue('');
+            setIsResetPasswordOpen(true);
+          }}
+          title="Redefinir Senha"
+          aria-label={`Redefinir senha de ${u.name}`}
+          className={`${base} bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200`}
+        >
+          <KeyRound className="w-3.5 h-3.5" />
+          {mobile && <span>Senha</span>}
+        </button>
+
+        <button
+          onClick={() => {
+            setSelectedUser(u);
+            setEditName(u.name);
+            setEditRole(u.role);
+            setIsEditOpen(true);
+          }}
+          title="Editar Usuário"
+          aria-label={`Editar ${u.name}`}
+          className={`${base} bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200`}
+        >
+          <Edit2 className="w-3.5 h-3.5" />
+          {mobile && <span>Editar</span>}
+        </button>
+
+        {isSuperadmin && !isSuper && (
+          <button
+            onClick={() => {
+              setSelectedUser(u);
+              setIsDeleteConfirmOpen(true);
+            }}
+            title="Excluir Usuário"
+            aria-label={`Excluir ${u.name}`}
+            className={`${base} bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {mobile && <span>Excluir</span>}
+          </button>
+        )}
+      </>
+    );
+  };
+
   return (
     <div className="space-y-4 pb-12">
       {/* Header */}
@@ -267,173 +423,61 @@ export const UsersManagementView: React.FC = () => {
         </span>
       </div>
 
-      {/* Users List Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-700">
-            <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-              <tr>
-                <th className="p-3.5">Usuário & Nome</th>
-                <th className="p-3.5">Nível / Cargo</th>
-                <th className="p-3.5">Status</th>
-                <th className="p-3.5">Último Acesso</th>
-                <th className="p-3.5 text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredUsers.map((u) => {
-                const isSuper = u.role === 'superadmin';
-                const isBlocked = u.status === 'bloqueado';
-                const isMe = currentUser?.id === u.id;
-
-                return (
-                  <tr key={u.id} className="hover:bg-slate-50/70 transition-colors">
-                    <td className="p-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <div
-                          className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs ${
-                            isSuper
-                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                              : 'bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          {isSuper ? <Shield className="w-4 h-4 text-amber-600" /> : <User className="w-4 h-4" />}
-                        </div>
-                        <div>
-                          <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                            <span>{u.name}</span>
-                            {isMe && (
-                              <span className="text-[10px] font-bold px-1.5 py-0.2 bg-blue-50 text-blue-700 border border-blue-200 rounded">
-                                Você
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] font-mono text-slate-500">
-                            @{u.username}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-
-                    <td className="p-3.5">
-                      <span
-                        className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${
-                          isSuper
-                            ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                            : u.role === 'admin'
-                            ? 'bg-blue-100 text-blue-900 border border-blue-200'
-                            : 'bg-slate-100 text-slate-700 border border-slate-200'
-                        }`}
-                      >
-                        {u.role === 'superadmin' ? 'Superadmin' : u.role === 'admin' ? 'Administrador' : u.role === 'entregador' ? 'Entregador' : 'Operador'}
-                      </span>
-                    </td>
-
-                    <td className="p-3.5">
-                      <span
-                        className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full ${
-                          isBlocked
-                            ? 'bg-red-50 text-red-700 border border-red-200'
-                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        }`}
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full ${isBlocked ? 'bg-red-500' : 'bg-emerald-500'}`} />
-                        <span>{isBlocked ? 'Bloqueado' : 'Ativo'}</span>
-                      </span>
-                    </td>
-
-                    <td className="p-3.5 text-slate-500 text-[11px]">
-                      {u.lastLoginAt ? (
-                        <div className="flex items-center gap-1">
-                          <Clock className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{formatDate(u.lastLoginAt)}</span>
-                        </div>
-                      ) : (
-                        <span className="text-slate-400 italic">Nunca acessou</span>
-                      )}
-                    </td>
-
-                    <td className="p-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {/* Se o usuário listado for superadmin e o usuário logado NÃO for superadmin: BLOQUEIO TOTAL */}
-                        {isSuper && !isSuperadmin ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
-                            <Lock className="w-3 h-3 text-amber-600" />
-                            <span>Protegido (Superadmin)</span>
-                          </span>
-                        ) : (
-                          <>
-                            {/* Bloquear / Desbloquear (Disponível apenas para Superadmin, e não no próprio superadmin) */}
-                            {isSuperadmin && !isSuper && (
-                              <button
-                                onClick={() => handleToggleBlock(u)}
-                                title={isBlocked ? 'Desbloquear Usuário' : 'Bloquear Usuário'}
-                                className={`p-1.5 rounded-lg border transition-all text-xs font-bold flex items-center gap-1 ${
-                                  isBlocked
-                                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300'
-                                    : 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200'
-                                }`}
-                              >
-                                {isBlocked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                                <span className="hidden sm:inline">{isBlocked ? 'Desbloquear' : 'Bloquear'}</span>
-                              </button>
-                            )}
-
-                            {/* Redefinir Senha */}
-                            {(isSuperadmin || !isSuper) && (
-                              <button
-                                onClick={() => {
-                                  setSelectedUser(u);
-                                  setResetPasswordValue('');
-                                  setIsResetPasswordOpen(true);
-                                }}
-                                title="Redefinir Senha"
-                                className="p-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors"
-                              >
-                                <KeyRound className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-
-                            {/* Editar */}
-                            {(isSuperadmin || !isSuper) && (
-                              <button
-                                onClick={() => {
-                                  setSelectedUser(u);
-                                  setEditName(u.name);
-                                  setEditRole(u.role);
-                                  setIsEditOpen(true);
-                                }}
-                                title="Editar Usuário"
-                                className="p-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-
-                            {/* Excluir (Disponível apenas para Superadmin em usuários comuns) */}
-                            {isSuperadmin && !isSuper && (
-                              <button
-                                onClick={() => {
-                                  setSelectedUser(u);
-                                  setIsDeleteConfirmOpen(true);
-                                }}
-                                title="Excluir Usuário"
-                                className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-colors"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {/* Lista de usuários: cartões no celular, tabela a partir do tablet */}
+      {filteredUsers.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
+          Nenhum usuário encontrado para essa busca.
         </div>
-      </div>
+      ) : (
+        <>
+          <ul className="md:hidden space-y-3">
+            {filteredUsers.map((u) => (
+              <li key={u.id} className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  {renderIdentity(u)}
+                  {renderStatus(u)}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                  {renderRole(u)}
+                  {renderLastAccess(u)}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-slate-100">
+                  {renderActions(u, true)}
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-700">
+                <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                  <tr>
+                    <th className="p-3.5">Usuário & Nome</th>
+                    <th className="p-3.5">Nível / Cargo</th>
+                    <th className="p-3.5">Status</th>
+                    <th className="p-3.5">Último Acesso</th>
+                    <th className="p-3.5 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredUsers.map((u) => (
+                    <tr key={u.id} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="p-3.5">{renderIdentity(u)}</td>
+                      <td className="p-3.5">{renderRole(u)}</td>
+                      <td className="p-3.5">{renderStatus(u)}</td>
+                      <td className="p-3.5 text-slate-500 text-[11px]">{renderLastAccess(u)}</td>
+                      <td className="p-3.5">
+                        <div className="flex items-center justify-end gap-1.5">{renderActions(u, false)}</div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* MODAL 1: CADASTRAR NOVO USUÁRIO */}
       {isCreateOpen && (
@@ -504,16 +548,23 @@ export const UsersManagementView: React.FC = () => {
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">
-                  Senha Inicial (Opcional)
+                <label htmlFor="new-user-password" className="font-bold text-slate-700 block mb-1">
+                  Senha Inicial *
                 </label>
                 <input
+                  id="new-user-password"
                   type="password"
-                  placeholder="Deixe em branco para definir no primeiro acesso"
+                  required
+                  minLength={MIN_PASSWORD_LENGTH}
+                  autoComplete="new-password"
+                  placeholder={`Mínimo de ${MIN_PASSWORD_LENGTH} caracteres`}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   className="w-full border border-slate-300 rounded-xl p-2.5 font-medium"
                 />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Informe a senha ao usuário pessoalmente. Ela é criptografada no servidor e não pode ser consultada depois.
+                </p>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
@@ -643,7 +694,9 @@ export const UsersManagementView: React.FC = () => {
                   type="password"
                   required
                   autoFocus
-                  placeholder="Mínimo de 4 caracteres"
+                  minLength={MIN_PASSWORD_LENGTH}
+                  autoComplete="new-password"
+                  placeholder={`Mínimo de ${MIN_PASSWORD_LENGTH} caracteres`}
                   value={resetPasswordValue}
                   onChange={(e) => setResetPasswordValue(e.target.value)}
                   className="w-full border border-slate-300 rounded-xl p-2.5 font-medium"

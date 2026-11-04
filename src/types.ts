@@ -7,7 +7,6 @@ export interface AppUser {
   name: string;
   role: UserRole;
   status: UserStatus;
-  passwordHash?: string;
   hasDefinedPassword?: boolean;
   lastLoginAt?: string;
   createdAt: string;
@@ -139,6 +138,8 @@ export interface Supplier {
   document?: string;
   phone?: string;
   address?: string;
+  contactPerson?: string;
+  productsSupplied?: string;
   notes?: string;
 }
 
@@ -155,6 +156,8 @@ export interface SaleItem {
   unitPrice: number;
   total: number;
   isCylinder: boolean;
+  /** Vasilhames vazios devolvidos deste produto (troca). */
+  returnedQuantity?: number;
 }
 
 export interface Sale {

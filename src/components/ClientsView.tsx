@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
 import { Client } from '../types';
-import { formatCurrency, formatDate } from '../utils/formatters';
+import { formatCurrency, formatDate, maskPhone, formatPhone } from '../utils/formatters';
 
 export const ClientsView: React.FC = () => {
   const { clients, sales, receivables, addClient, updateClient } = useErp();
@@ -164,8 +164,8 @@ export const ClientsView: React.FC = () => {
                 {client.phone && (
                   <div className="flex items-center gap-1.5 text-xs text-emerald-700 font-bold mb-1.5">
                     <Phone className="w-3.5 h-3.5" />
-                    <a href={`tel:${client.phone}`} className="hover:underline">
-                      {client.phone}
+                    <a href={`tel:${client.phone.replace(/\D/g, '')}`} className="hover:underline">
+                      {formatPhone(client.phone)}
                     </a>
                   </div>
                 )}
@@ -251,14 +251,14 @@ export const ClientsView: React.FC = () => {
 
               <div>
                 <label className="font-bold text-slate-700 block mb-1">
-                  Telefone / WhatsApp
+                  Telefone / WhatsApp <span className="text-slate-400 font-normal">(Opcional)</span>
                 </label>
                 <input
                   type="text"
-                  placeholder="(XX) XXXXX-XXXX"
+                  placeholder="(89) 9 9999 - 9999"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="w-full border border-slate-300 rounded-xl p-2"
+                  onChange={(e) => setPhone(maskPhone(e.target.value))}
+                  className="w-full border border-slate-300 rounded-xl p-2 font-medium"
                 />
               </div>
 
