@@ -130,17 +130,14 @@ export const StockView: React.FC = () => {
   return (
     <div className="space-y-4 pb-12">
       {/* Top Header */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-amber-500/15 flex items-center justify-center text-amber-600">
-            <Package className="w-5 h-5" />
-          </div>
           <div>
-            <h1 className="text-lg sm:text-xl font-black text-slate-900">
-              Controle de Estoque & Vasilhames
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+              Estoque
             </h1>
-            <p className="text-xs text-slate-500">
-              Estoque contínuo, segregação de cheios/vazios e auditoria de ajustes
+            <p className="text-sm text-slate-500 mt-0.5">
+              Cheios e vazios por produto, movimentações e ajustes.
             </p>
           </div>
         </div>
@@ -639,7 +636,7 @@ export const StockView: React.FC = () => {
                   <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs space-y-1">
                     <div className="font-bold text-amber-900 flex items-center gap-1.5">
                       <AlertTriangle className="w-4 h-4 text-amber-600" />
-                      <span>⚠️ Divergência Encontrada na Conferência:</span>
+                      <span>Divergência encontrada na conferência:</span>
                     </div>
                     {diffConfFull !== 0 && (
                       <p className="text-amber-800">

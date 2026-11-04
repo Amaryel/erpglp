@@ -156,17 +156,14 @@ export const SalesHistoryView: React.FC = () => {
   return (
     <div className="space-y-4 pb-12">
       {/* Header */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-amber-500/15 flex items-center justify-center text-amber-600">
-            <Flame className="w-5 h-5" />
-          </div>
           <div>
-            <h1 className="text-lg sm:text-xl font-black text-slate-900">
-              Histórico de Vendas
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+              Vendas
             </h1>
-            <p className="text-xs text-slate-500">
-              Consulte todas as vendas balcão e entregas, detalhes dos botijões, pagamentos e comprovantes
+            <p className="text-sm text-slate-500 mt-0.5">
+              Todas as vendas, com filtros e comprovantes.
             </p>
           </div>
         </div>
@@ -432,7 +429,7 @@ export const SalesHistoryView: React.FC = () => {
                 onClick={() => setSelectedSale(null)}
                 className="text-slate-400 hover:text-slate-700 text-xs font-bold p-1 rounded-lg"
               >
-                ✕ Fechar
+                Fechar
               </button>
             </div>
 

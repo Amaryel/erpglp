@@ -92,7 +92,7 @@ const FinalizeDeliveryContent: React.FC<{ sale: Sale; onClose: () => void }> = (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/80 backdrop-blur-xs overflow-y-auto">
       <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-slate-200 overflow-hidden my-auto max-h-[95vh] flex flex-col animate-scaleUp">
         {/* Header */}
-        <div className="px-4 py-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white flex items-center justify-between">
+        <div className="px-4 py-3 bg-orange-600 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-white" />
             <h2 className="text-base sm:text-lg font-bold">
@@ -144,7 +144,7 @@ const FinalizeDeliveryContent: React.FC<{ sale: Sale; onClose: () => void }> = (
           {cylinderItems.length > 0 && (
             <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3.5 space-y-2.5">
               <div className="flex items-center justify-between gap-2">
-                <label className="text-xs font-bold text-amber-950 uppercase tracking-wider flex items-center gap-1.5">
+                <label className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
                   <Package className="w-4 h-4 text-amber-600" />
                   <span>1. Vasilhames devolvidos</span>
                 </label>
@@ -213,7 +213,7 @@ const FinalizeDeliveryContent: React.FC<{ sale: Sale; onClose: () => void }> = (
 
           {/* STEP 2: Pagamento do cliente */}
           <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-3.5 space-y-2.5">
-            <label className="text-xs font-bold text-emerald-950 uppercase tracking-wider block">
+            <label className="text-xs font-bold text-emerald-950 block">
               {cylinderItems.length > 0 ? '2. ' : ''}Pagamento recebido
             </label>
 
@@ -286,7 +286,7 @@ const FinalizeDeliveryContent: React.FC<{ sale: Sale; onClose: () => void }> = (
             type="button"
             onClick={handleSubmit}
             disabled={!summary.isBalanced || needsClient}
-            className="flex-1 py-3 px-5 rounded-xl font-bold text-sm text-white bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+            className="flex-1 py-3 px-5 rounded-xl font-bold text-sm text-white bg-emerald-600 hover:bg-emerald-700 shadow-md flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
           >
             <CheckCircle2 className="w-5 h-5" />
             <span>Confirmar e Finalizar Entrega</span>

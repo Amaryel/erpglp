@@ -101,17 +101,14 @@ export const ProfitView: React.FC = () => {
   return (
     <div className="space-y-4 pb-12">
       {/* Top Header */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center text-emerald-600">
-            <TrendingUp className="w-5 h-5" />
-          </div>
           <div>
-            <h1 className="text-lg sm:text-xl font-black text-slate-900">
-              Demonstrativo de Lucro & Faturamento
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+              Resultados
             </h1>
-            <p className="text-xs text-slate-500">
-              Cálculo baseado no histórico de custo real gravado em cada venda individual
+            <p className="text-sm text-slate-500 mt-0.5">
+              Faturamento, custos e lucro por período.
             </p>
           </div>
         </div>
@@ -128,7 +125,7 @@ export const ProfitView: React.FC = () => {
 
       {/* Date Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-2.5 rounded-xl border border-slate-200">
-        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider pl-1">
+        <span className="text-xs font-bold text-slate-500 pl-1">
           Filtrar Período:
         </span>
 

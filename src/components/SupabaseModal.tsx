@@ -112,7 +112,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs overflow-y-auto">
       <div className="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden my-auto animate-in fade-in zoom-in-95 duration-200">
         {/* Modal Header */}
-        <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+        <div className="p-4 sm:p-5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shadow-inner">
               <Database className="w-5 h-5" />
@@ -122,8 +122,8 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
                 <h2 className="text-base sm:text-lg font-black text-white">
                   Banco de Dados Online (Supabase)
                 </h2>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                  🟢 Conectado
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  Conectado
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
@@ -179,7 +179,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Server className="w-4 h-4 text-amber-400" />
-                <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                <span className="text-xs font-bold text-slate-200">
                   Script SQL de Tabelas do Supabase
                 </span>
               </div>
@@ -189,7 +189,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-md ${
                   copiedSql
                     ? 'bg-emerald-500 text-white'
-                    : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 text-white'
+                    : 'bg-orange-600 hover:from-amber-600 text-white'
                 }`}
               >
                 {copiedSql ? (

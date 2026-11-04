@@ -176,17 +176,14 @@ export const ProductsView: React.FC = () => {
   return (
     <div className="space-y-4 pb-12">
       {/* Header */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-amber-500/15 flex items-center justify-center text-amber-600">
-            <Package className="w-5 h-5" />
-          </div>
           <div>
-            <h1 className="text-lg sm:text-xl font-black text-slate-900">
-              Produtos & Entregadores
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+              Produtos
             </h1>
-            <p className="text-xs text-slate-500">
-              Gerencie a tabela de preços, custos de reposição, estoque mínimo e equipe de entrega
+            <p className="text-sm text-slate-500 mt-0.5">
+              Preços, custos, estoque mínimo e entregadores.
             </p>
           </div>
         </div>

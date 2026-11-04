@@ -8,20 +8,21 @@ import {
   Wallet,
   TrendingUp,
   FileText,
-  ShieldAlert,
+  ShieldCheck,
   Settings,
-  PlusCircle,
+  Plus,
   Menu,
   X,
-  CreditCard,
-  Layers,
-  ChevronLeft,
-  ChevronRight,
+  HandCoins,
+  Receipt,
+  ArrowDownCircle,
+  ChevronsLeft,
+  ChevronsRight,
   Database,
-  Cloud,
   LogOut,
-  UserCheck,
-  Shield,
+  UserCog,
+  ShoppingBag,
+  Boxes,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
 import { useAuth } from '../context/AuthContext';
@@ -46,24 +47,38 @@ export type ActiveTab =
   | 'usuarios'
   | 'config';
 
-/** Rótulos das telas navegáveis (usados no menu, na barra de navegação e no endereço). */
+/** Rótulos das telas navegáveis (menu, trilha de navegação e endereço). */
 export const TAB_LABELS: Partial<Record<ActiveTab, string>> = {
   dashboard: 'Início',
-  em_andamento: 'Vendas em Andamento',
-  historico_vendas: 'Histórico de Vendas',
-  estoque: 'Estoque & Vasilhames',
+  em_andamento: 'Entregas',
+  historico_vendas: 'Vendas',
+  estoque: 'Estoque',
   clientes: 'Clientes',
-  receber: 'Contas a Receber (Fiados)',
-  caixa: 'Caixa do Dia',
-  pagar: 'Contas a Pagar',
-  despesas: 'Saídas & Despesas',
-  produtos: 'Produtos & Cadastros',
-  lucro: 'Lucro & Resultados',
-  relatorios: 'Relatórios Gerenciais',
-  auditoria: 'Auditoria & Divergências',
-  usuarios: 'Usuários & Acessos',
-  config: 'Configurações & Backup',
+  receber: 'Fiado',
+  caixa: 'Caixa',
+  pagar: 'Contas a pagar',
+  despesas: 'Despesas',
+  produtos: 'Produtos',
+  lucro: 'Resultados',
+  relatorios: 'Relatórios',
+  auditoria: 'Auditoria',
+  usuarios: 'Usuários',
+  config: 'Configurações',
 };
+
+export const ROLE_LABELS: Record<string, string> = {
+  superadmin: 'Superadmin',
+  admin: 'Administrador',
+  operador: 'Operador',
+  entregador: 'Entregador',
+};
+
+/** Iniciais para o avatar (ignora textos entre parênteses). */
+export function userInitials(name?: string) {
+  if (!name) return '?';
+  const parts = name.replace(/\(.*?\)/g, '').trim().split(/\s+/);
+  return ((parts[0]?.[0] || '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -76,6 +91,14 @@ interface NavbarProps {
   setSidebarCollapsed: (collapsed: boolean) => void;
 }
 
+type NavItem = {
+  id: ActiveTab;
+  icon: React.ElementType;
+  badge?: number;
+  tone?: 'brand' | 'danger';
+  hint?: string;
+};
+
 export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   setActiveTab,
@@ -86,72 +109,68 @@ export const Navbar: React.FC<NavbarProps> = ({
   sidebarCollapsed,
   setSidebarCollapsed,
 }) => {
-  const {
-    inProgressDeliveriesCount,
-    overduePayablesCount,
-    cashRegister,
-    criticalStockCount,
-    isOnlineDb,
-    dbSyncState,
-  } = useErp();
+  const { inProgressDeliveriesCount, overduePayablesCount, cashRegister, criticalStockCount, isOnlineDb, dbSyncState } =
+    useErp();
 
   const { currentUser, logout } = useAuth();
   const isSuperadmin = currentUser?.role === 'superadmin';
-  const isAdminOrSuper = currentUser?.role === 'superadmin' || currentUser?.role === 'admin';
+  const isAdminOrSuper = isSuperadmin || currentUser?.role === 'admin';
+  const cashOpen = cashRegister?.status === 'aberto';
+  const firstName = currentUser?.name.replace(/\s*\(.*?\)/g, '').split(' ')[0] || '';
 
-  const navItems = [
-    { id: 'dashboard' as ActiveTab, label: 'Dashboard', icon: LayoutDashboard },
+  const sections: { title: string; items: NavItem[] }[] = [
     {
-      id: 'em_andamento' as ActiveTab,
-      label: 'Vendas em Andamento',
-      icon: Truck,
-      badge: inProgressDeliveriesCount > 0 ? inProgressDeliveriesCount : undefined,
-      badgeColor: 'bg-amber-500 text-white',
-    },
-    { id: 'historico_vendas' as ActiveTab, label: 'Histórico de Vendas', icon: Flame },
-    {
-      id: 'estoque' as ActiveTab,
-      label: 'Estoque & Vasilhames',
-      icon: Package,
-      badge: criticalStockCount > 0 ? `${criticalStockCount} baixos` : undefined,
-      badgeColor: 'bg-rose-500 text-white',
-    },
-    { id: 'clientes' as ActiveTab, label: 'Clientes', icon: Users },
-    {
-      id: 'receber' as ActiveTab,
-      label: 'Contas a Receber (Fiados)',
-      icon: CreditCard,
-    },
-    {
-      id: 'caixa' as ActiveTab,
-      label: 'Caixa do Dia',
-      icon: Wallet,
-      extra: cashRegister?.status === 'aberto' ? 'Aberto' : 'Fechado',
+      title: 'Operação',
+      items: [
+        { id: 'dashboard', icon: LayoutDashboard },
+        {
+          id: 'em_andamento',
+          icon: Truck,
+          badge: inProgressDeliveriesCount > 0 ? inProgressDeliveriesCount : undefined,
+          tone: 'brand',
+        },
+        { id: 'historico_vendas', icon: ShoppingBag },
+        {
+          id: 'estoque',
+          icon: Package,
+          badge: criticalStockCount > 0 ? criticalStockCount : undefined,
+          tone: 'danger',
+          hint: criticalStockCount > 0 ? `${criticalStockCount} produto(s) abaixo do mínimo` : undefined,
+        },
+        { id: 'clientes', icon: Users },
+      ],
     },
     {
-      id: 'pagar' as ActiveTab,
-      label: 'Contas a Pagar',
-      icon: Layers,
-      badge: overduePayablesCount > 0 ? `${overduePayablesCount} vencidas` : undefined,
-      badgeColor: 'bg-red-600 text-white',
+      title: 'Financeiro',
+      items: [
+        { id: 'caixa', icon: Wallet, hint: cashOpen ? 'Caixa aberto' : 'Caixa fechado' },
+        { id: 'receber', icon: HandCoins },
+        {
+          id: 'pagar',
+          icon: Receipt,
+          badge: overduePayablesCount > 0 ? overduePayablesCount : undefined,
+          tone: 'danger',
+          hint: overduePayablesCount > 0 ? `${overduePayablesCount} conta(s) vencida(s)` : undefined,
+        },
+        { id: 'despesas', icon: ArrowDownCircle },
+        { id: 'lucro', icon: TrendingUp },
+      ],
     },
-    { id: 'despesas' as ActiveTab, label: 'Saídas & Despesas', icon: Layers },
-    { id: 'produtos' as ActiveTab, label: 'Produtos & Cadastros', icon: Package },
-    { id: 'lucro' as ActiveTab, label: 'Lucro & Resultados', icon: TrendingUp },
-    { id: 'relatorios' as ActiveTab, label: 'Relatórios Gerenciais', icon: FileText },
-    { id: 'auditoria' as ActiveTab, label: 'Auditoria & Divergências', icon: ShieldAlert },
-    ...(isAdminOrSuper
-      ? [
-          {
-            id: 'usuarios' as ActiveTab,
-            label: 'Usuários & Acessos',
-            icon: Shield,
-            badge: isSuperadmin ? 'Superadmin' : undefined,
-            badgeColor: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
-          },
-        ]
-      : []),
-    { id: 'config' as ActiveTab, label: 'Configurações & Backup', icon: Settings },
+    {
+      title: 'Gestão',
+      items: [
+        { id: 'produtos', icon: Boxes },
+        { id: 'relatorios', icon: FileText },
+        { id: 'auditoria', icon: ShieldCheck },
+      ],
+    },
+    {
+      title: 'Sistema',
+      items: [
+        ...(isAdminOrSuper ? [{ id: 'usuarios' as ActiveTab, icon: UserCog }] : []),
+        { id: 'config', icon: Settings },
+      ],
+    },
   ];
 
   const handleSelectTab = (tab: ActiveTab) => {
@@ -176,168 +195,131 @@ export const Navbar: React.FC<NavbarProps> = ({
         onClick={() => (isMenu ? setMobileMenuOpen(!mobileMenuOpen) : handleSelectTab(item.id as ActiveTab))}
         aria-current={!isMenu && isActive ? 'page' : undefined}
         aria-expanded={isMenu ? mobileMenuOpen : undefined}
-        className={`relative flex flex-col items-center justify-center gap-0.5 min-h-14 rounded-xl text-[11px] font-semibold transition-colors ${
-          isActive ? 'text-amber-400' : 'text-slate-400 hover:text-white'
+        className={`relative flex flex-col items-center justify-center gap-1 min-h-14 text-[11px] font-medium transition-colors ${
+          isActive ? 'text-slate-900' : 'text-slate-500 hover:text-slate-800'
         }`}
       >
         <span className="relative">
-          <Icon className="w-5 h-5" />
+          <Icon className="w-[22px] h-[22px]" strokeWidth={isActive ? 2.2 : 1.8} />
           {!!item.count && item.count > 0 && (
-            <span className="absolute -top-1.5 -right-2.5 bg-amber-500 text-slate-950 font-black text-[10px] min-w-4 h-4 px-1 rounded-full flex items-center justify-center">
+            <span className="absolute -top-1.5 -right-2.5 bg-orange-600 text-white font-semibold text-[10px] min-w-4 h-4 px-1 rounded-full flex items-center justify-center ring-2 ring-white">
               {item.count}
             </span>
           )}
         </span>
         <span>{item.label}</span>
-        {isActive && <span className="absolute top-0 h-0.5 w-8 rounded-full bg-amber-400" />}
+        {isActive && <span className="absolute top-0 h-0.5 w-6 rounded-full bg-orange-600" />}
       </button>
     );
   };
 
+  const dbDotClass =
+    dbSyncState === 'error' ? 'bg-rose-500' : isOnlineDb ? 'bg-emerald-500' : 'bg-amber-500';
+
   return (
     <>
-      {/* Top Header Bar */}
-      <header className="sticky top-0 z-40 bg-slate-900 text-white border-b border-slate-800 shadow-sm">
-        <div className="w-full px-3 sm:px-4 lg:px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Mobile / Tablet Drawer Toggle Button (< lg) */}
+      {/* Topo */}
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
+        <div className="w-full px-3 sm:px-4 lg:px-5 h-14 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
             <button
               id="mobile-menu-toggle-btn"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden w-10 h-10 -ml-1 flex items-center justify-center rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+              className="lg:hidden w-10 h-10 -ml-1 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100"
               aria-label={mobileMenuOpen ? 'Fechar menu' : 'Abrir menu'}
               aria-expanded={mobileMenuOpen}
             >
               {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
 
-            {/* Desktop Sidebar Collapse / Expand Toggle (>= lg) */}
-            <button
-              id="desktop-sidebar-collapse-btn"
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="hidden lg:flex p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-              title={sidebarCollapsed ? 'Expandir Menu Lateral' : 'Recolher Menu Lateral'}
-              aria-label={sidebarCollapsed ? 'Expandir Menu' : 'Recolher Menu'}
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-
-            {/* Brand */}
             <button
               type="button"
               onClick={() => handleSelectTab('dashboard')}
-              className="flex items-center gap-2 cursor-pointer select-none rounded-lg focus-visible:outline-2 focus-visible:outline-amber-400"
+              className="flex items-center gap-2.5 rounded-lg select-none"
               aria-label="Ir para o início"
             >
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-white font-bold text-lg shadow-inner shrink-0">
-                <Flame className="w-5 h-5 fill-white text-orange-500" />
-              </div>
-              <div>
-                <span className="text-lg font-black tracking-tight text-white flex items-center gap-1.5">
-                  Erp<span className="text-amber-400">GLP</span>
-                  <span className="hidden sm:inline text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                    Pro
-                  </span>
-                </span>
-              </div>
+              <span className="w-8 h-8 rounded-lg bg-orange-600 flex items-center justify-center text-white shrink-0">
+                <Flame className="w-[18px] h-[18px]" strokeWidth={2.2} />
+              </span>
+              <span className="text-[17px] font-bold tracking-tight text-slate-900">
+                Erp<span className="text-orange-600">GLP</span>
+              </span>
             </button>
           </div>
 
-          {/* Right Header Controls */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Supabase Online DB Badge */}
-            {isSuperadmin ? (
-              <button
-                id="header-supabase-btn"
-                onClick={onOpenSupabase}
-                title="Gerenciar Banco de Dados Online (Superadmin)"
-                className="flex items-center gap-1.5 h-8 px-2.5 rounded-full text-xs font-semibold border bg-emerald-950/70 text-emerald-300 border-emerald-600/60 hover:bg-emerald-900/70 transition-all cursor-pointer"
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <Database className="w-3.5 h-3.5" />
-                <span className="hidden xl:inline">
-                  Banco Online
-                </span>
-                {dbSyncState === 'syncing' && (
-                  <span className="text-[10px] text-emerald-200 animate-pulse">Sync...</span>
-                )}
-              </button>
-            ) : (
-              <div
-                title="Banco de Dados Online Conectado"
-                className="flex items-center gap-1.5 h-8 px-2.5 rounded-full text-xs font-semibold border bg-emerald-950/70 text-emerald-300 border-emerald-600/60 select-none"
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <Database className="w-3.5 h-3.5" />
-                <span className="hidden xl:inline">
-                  Banco Online
-                </span>
-                {dbSyncState === 'syncing' && (
-                  <span className="text-[10px] text-emerald-200 animate-pulse">Sync...</span>
-                )}
-              </div>
-            )}
-
-            {/* Caixa Status Indicator */}
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <button
               id="header-cash-status-btn"
               onClick={() => handleSelectTab('caixa')}
-              className={`hidden md:flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-medium border transition-colors ${
-                cashRegister?.status === 'aberto'
-                  ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/50 hover:bg-emerald-900/60'
-                  : 'bg-rose-950/60 text-rose-300 border-rose-700/50 hover:bg-rose-900/60'
-              }`}
+              className="hidden md:flex items-center gap-2 h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50"
             >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  cashRegister?.status === 'aberto' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'
-                }`}
-              />
-              <span>Caixa {cashRegister?.status === 'aberto' ? 'Aberto' : 'Fechado'}</span>
-              {cashRegister?.status === 'aberto' && (
-                <span className="font-bold text-white ml-0.5">
-                  {formatCurrency(cashRegister.currentBalance)}
+              <span className={`w-2 h-2 rounded-full ${cashOpen ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+              <span>{cashOpen ? 'Caixa aberto' : 'Caixa fechado'}</span>
+              {cashOpen && (
+                <span className="font-semibold text-slate-900 tabular-nums">
+                  {formatCurrency(cashRegister!.currentBalance)}
                 </span>
               )}
             </button>
 
-            {/* Big Primary Action: Nova Venda */}
+            {isSuperadmin ? (
+              <button
+                id="header-supabase-btn"
+                onClick={onOpenSupabase}
+                title="Banco de dados online"
+                aria-label="Banco de dados online"
+                className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+              >
+                <span className="relative flex">
+                  <Database className="w-4 h-4" />
+                  <span className={`absolute -bottom-0.5 -right-1 w-2 h-2 rounded-full ring-2 ring-white ${dbDotClass}`} />
+                </span>
+              </button>
+            ) : (
+              <span
+                title={isOnlineDb ? 'Banco de dados conectado' : 'Sem conexão com o banco'}
+                className="w-9 h-9 flex items-center justify-center text-slate-400"
+              >
+                <span className="relative flex">
+                  <Database className="w-4 h-4" />
+                  <span className={`absolute -bottom-0.5 -right-1 w-2 h-2 rounded-full ring-2 ring-white ${dbDotClass}`} />
+                </span>
+              </span>
+            )}
+
             <button
               id="header-new-sale-btn"
               onClick={onOpenNewSale}
-              className="hidden lg:flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-bold text-sm px-4 h-10 rounded-lg shadow-md shadow-orange-500/20 transition-all transform active:scale-95 shrink-0"
+              className="hidden lg:flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold transition-colors"
             >
-              <PlusCircle className="w-5 h-5" />
-              <span>Nova Venda</span>
+              <Plus className="w-4 h-4" strokeWidth={2.5} />
+              <span>Nova venda</span>
             </button>
 
-            {/* Current User & Logout Button */}
             {currentUser && (
-              <div className="hidden md:flex items-center gap-2 pl-2.5 border-l border-slate-800">
-                <div
+              <div className="hidden md:flex items-center gap-1 pl-2 ml-1 border-l border-slate-200">
+                <button
+                  type="button"
                   onClick={() => isAdminOrSuper && handleSelectTab('usuarios')}
-                  className="hidden lg:flex flex-col text-right cursor-pointer hover:opacity-80 transition-opacity"
-                  title={`Usuário logado: ${currentUser.name}`}
+                  className="flex items-center gap-2 rounded-lg p-1 hover:bg-slate-50"
+                  title={currentUser.name}
                 >
-                  <span className="text-xs font-bold text-slate-200 leading-tight truncate max-w-[120px]">
-                    {currentUser.name.split(' ')[0]}
+                  <span className="w-8 h-8 rounded-full bg-slate-900 text-white text-xs font-semibold flex items-center justify-center">
+                    {userInitials(currentUser.name)}
                   </span>
-                  <span className="text-[10px] text-amber-400 uppercase font-bold leading-none">
-                    {currentUser.role}
+                  <span className="hidden xl:flex flex-col text-left leading-tight pr-1">
+                    <span className="text-sm font-semibold text-slate-900 max-w-[140px] truncate">{firstName}</span>
+                    <span className="text-xs text-slate-500">{ROLE_LABELS[currentUser.role] || currentUser.role}</span>
                   </span>
-                </div>
-
+                </button>
                 <button
                   id="header-logout-btn"
-                  onClick={() => {
-                    logout();
-                  }}
-                  title="Sair do Sistema (Logout)"
-                  className="flex items-center gap-1.5 h-9 px-3 rounded-xl bg-rose-950/50 hover:bg-rose-900/90 text-rose-300 hover:text-white border border-rose-800/60 text-xs font-bold transition-all shadow-xs active:scale-95 shrink-0"
-                  aria-label="Sair da Conta"
+                  onClick={() => logout()}
+                  title="Sair"
+                  aria-label="Sair da conta"
+                  className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50"
                 >
-                  <LogOut className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Sair</span>
+                  <LogOut className="w-4 h-4" />
                 </button>
               </div>
             )}
@@ -345,122 +327,109 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </header>
 
-      {/* Mobile/Tablet Backdrop Overlay (< lg) */}
+      {/* Fundo escurecido do menu no celular/tablet */}
       <div
-        className={`fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-40 transition-opacity lg:hidden ${
+        className={`fixed inset-0 bg-slate-950/40 z-40 transition-opacity lg:hidden ${
           mobileMenuOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
         }`}
         onClick={() => setMobileMenuOpen(false)}
         aria-hidden="true"
       />
 
-      {/* SIDEBAR */}
+      {/* Menu lateral */}
       <aside
-        className={`fixed top-0 lg:top-14 left-0 bottom-0 bg-slate-900 border-r border-slate-800 text-slate-300 z-50 lg:z-30 flex flex-col justify-between transition-all duration-300 ease-in-out ${
+        aria-label="Menu principal"
+        className={`fixed top-0 lg:top-14 left-0 bottom-0 bg-slate-950 text-slate-300 z-50 lg:z-30 flex flex-col transition-all duration-300 ease-in-out ${
           mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-        } ${
-          sidebarCollapsed ? 'w-72 lg:w-20' : 'w-72 lg:w-64'
-        }`}
+        } ${sidebarCollapsed ? 'w-72 lg:w-[68px]' : 'w-72 lg:w-60'}`}
       >
-        {/* Drawer Header (mobile only) */}
-        <div className="lg:hidden flex items-center justify-between px-4 py-3.5 border-b border-slate-800 bg-slate-950/50">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-white font-bold">
-              <Flame className="w-4 h-4 fill-white text-orange-500" />
-            </div>
-            <span className="font-black text-sm text-white">
-              Erp<span className="text-amber-400">GLP</span> Menu
+        <div className="lg:hidden flex items-center justify-between px-4 h-14 border-b border-white/10">
+          <span className="flex items-center gap-2.5">
+            <span className="w-8 h-8 rounded-lg bg-orange-600 flex items-center justify-center text-white">
+              <Flame className="w-[18px] h-[18px]" strokeWidth={2.2} />
             </span>
-          </div>
+            <span className="text-[17px] font-bold tracking-tight text-white">
+              Erp<span className="text-orange-500">GLP</span>
+            </span>
+          </span>
           <button
             onClick={() => setMobileMenuOpen(false)}
-            className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400 hover:text-white hover:bg-white/5"
             aria-label="Fechar menu"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Navigation Items */}
-        <div className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                id={`nav-item-${item.id}`}
-                onClick={() => handleSelectTab(item.id)}
-                title={sidebarCollapsed ? item.label : undefined}
-                aria-current={isActive ? 'page' : undefined}
-                className={`relative w-full min-h-11 flex items-center rounded-lg text-sm font-medium transition-all ${
-                  sidebarCollapsed
-                    ? 'justify-between px-3 py-2.5 lg:justify-center lg:px-2'
-                    : 'justify-between px-3 py-2.5'
-                } ${
-                  isActive
-                    ? 'bg-amber-500/15 text-amber-400 font-semibold border-l-4 border-amber-500'
-                    : 'hover:bg-slate-800/70 hover:text-white text-slate-300'
-                }`}
-              >
-                <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
-                  <Icon
-                    className={`w-4 h-4 shrink-0 ${
-                      isActive ? 'text-amber-400' : 'text-slate-400'
-                    }`}
-                  />
-                  <span className={`${sidebarCollapsed ? 'lg:hidden' : 'block'} truncate`}>
-                    {item.label}
-                  </span>
-                </div>
-
-                {/* Badges */}
-                {item.badge && (
-                  <span
-                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${item.badgeColor} ${
-                      sidebarCollapsed ? 'lg:hidden' : ''
-                    }`}
-                  >
-                    {item.badge}
-                  </span>
-                )}
-                {item.extra && (
-                  <span className={`text-[11px] text-slate-400 font-normal shrink-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-                    {item.extra}
-                  </span>
-                )}
-
-                {sidebarCollapsed && item.badge && (
-                  <span className="hidden lg:block absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-500" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Sidebar Footer with current user info and logout */}
-        <div className="p-3 border-t border-slate-800 bg-slate-950/60 text-xs text-slate-400 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className={`${sidebarCollapsed ? 'lg:hidden' : 'block'} truncate`}>
-              <div className="font-bold text-slate-200 truncate">
-                {currentUser?.name || 'ErpGLP Gestão'}
+        <nav className="flex-1 overflow-y-auto py-4 px-2.5 space-y-5 lg:space-y-4">
+          {sections.map((section) => (
+            <div key={section.title}>
+              <div className={`px-2.5 mb-1.5 text-xs font-medium text-slate-500 ${sidebarCollapsed ? 'lg:sr-only' : ''}`}>
+                {section.title}
               </div>
-              <div className="text-[10px] text-amber-400 uppercase font-bold">
-                {currentUser?.role || 'Modo Operacional'}
-              </div>
+              <ul className="space-y-0.5">
+                {section.items.map((item) => {
+                  const Icon = item.icon;
+                  const label = TAB_LABELS[item.id] || item.id;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <li key={item.id}>
+                      <button
+                        id={`nav-item-${item.id}`}
+                        onClick={() => handleSelectTab(item.id)}
+                        title={sidebarCollapsed ? label : item.hint}
+                        aria-current={isActive ? 'page' : undefined}
+                        className={`relative w-full min-h-10 lg:min-h-9 flex items-center gap-3 rounded-lg px-2.5 text-sm transition-colors ${
+                          sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''
+                        } ${
+                          isActive
+                            ? 'bg-white/[0.08] text-white font-medium'
+                            : 'text-slate-400 hover:text-white hover:bg-white/[0.04]'
+                        }`}
+                      >
+                        {isActive && (
+                          <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-orange-500" />
+                        )}
+                        <Icon className={`w-[18px] h-[18px] shrink-0 ${isActive ? 'text-orange-400' : ''}`} />
+                        <span className={`flex-1 text-left truncate ${sidebarCollapsed ? 'lg:hidden' : ''}`}>{label}</span>
+
+                        {item.id === 'caixa' && (
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full shrink-0 ${cashOpen ? 'bg-emerald-400' : 'bg-slate-600'} ${
+                              sidebarCollapsed ? 'lg:hidden' : ''
+                            }`}
+                            aria-label={item.hint}
+                          />
+                        )}
+                        {item.badge !== undefined && (
+                          <span
+                            className={`text-[11px] font-semibold min-w-5 h-5 px-1.5 rounded-full flex items-center justify-center shrink-0 ${
+                              item.tone === 'danger' ? 'bg-rose-500/15 text-rose-300' : 'bg-orange-500/15 text-orange-300'
+                            } ${sidebarCollapsed ? 'lg:absolute lg:top-0.5 lg:right-1 lg:min-w-4 lg:h-4 lg:px-1 lg:text-[10px]' : ''}`}
+                          >
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
+          ))}
+        </nav>
 
-            <button
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="hidden lg:flex p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-amber-400 transition-colors"
-              title={sidebarCollapsed ? 'Expandir Menu' : 'Recolher Menu'}
-            >
-              {sidebarCollapsed ? (
-                <ChevronRight className="w-4 h-4" />
-              ) : (
-                <ChevronLeft className="w-4 h-4" />
-              )}
-            </button>
+        <div className="border-t border-white/10 p-2.5 space-y-0.5">
+          <div className={`flex items-center gap-3 px-2 py-2 ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}>
+            <span className="w-8 h-8 rounded-full bg-white/10 text-white text-xs font-semibold flex items-center justify-center shrink-0">
+              {userInitials(currentUser?.name)}
+            </span>
+            <div className={`min-w-0 flex-1 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+              <div className="text-sm font-medium text-white truncate">
+                {currentUser?.name.replace(/\s*\(.*?\)/g, '') || 'ErpGLP'}
+              </div>
+              <div className="text-xs text-slate-500">{ROLE_LABELS[currentUser?.role || ''] || ''}</div>
+            </div>
           </div>
 
           <button
@@ -468,37 +437,48 @@ export const Navbar: React.FC<NavbarProps> = ({
               setMobileMenuOpen(false);
               logout();
             }}
-            className={`w-full min-h-11 flex items-center gap-2 px-3 py-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/80 text-rose-300 hover:text-white border border-rose-800/40 font-bold transition-all active:scale-95 shadow-xs ${
-              sidebarCollapsed ? 'justify-center lg:px-2' : ''
+            className={`w-full min-h-10 flex items-center gap-3 px-2.5 rounded-lg text-sm text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors ${
+              sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''
             }`}
-            title="Sair do Sistema (Logout)"
+            title="Sair"
           >
-            <LogOut className="w-4 h-4 text-rose-400 shrink-0" />
-            <span className={`${sidebarCollapsed ? 'lg:hidden' : 'block'} truncate`}>
-              Sair do Sistema
-            </span>
+            <LogOut className="w-[18px] h-[18px] shrink-0" />
+            <span className={sidebarCollapsed ? 'lg:hidden' : ''}>Sair</span>
+          </button>
+
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className={`hidden lg:flex w-full min-h-10 items-center gap-3 rounded-lg text-sm text-slate-500 hover:text-white hover:bg-white/[0.04] ${
+              sidebarCollapsed ? 'justify-center' : 'px-2.5'
+            }`}
+            title={sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}
+          >
+            {sidebarCollapsed ? (
+              <ChevronsRight className="w-[18px] h-[18px]" />
+            ) : (
+              <ChevronsLeft className="w-[18px] h-[18px]" />
+            )}
+            {!sidebarCollapsed && <span>Recolher menu</span>}
           </button>
         </div>
       </aside>
 
-      {/* Barra de navegação inferior (celular e tablet) */}
+      {/* Barra inferior (celular e tablet) */}
       <nav
         aria-label="Navegação principal"
-        className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-slate-900/95 backdrop-blur border-t border-slate-800 shadow-[0_-4px_16px_rgba(0,0,0,0.25)] pb-[env(safe-area-inset-bottom)]"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 pb-[env(safe-area-inset-bottom)]"
       >
         <div className="max-w-xl mx-auto grid grid-cols-5 items-end px-1">
           {bottomItems.slice(0, 2).map(renderBottomItem)}
-
           <div className="flex justify-center">
             <button
               onClick={onOpenNewSale}
-              className="-mt-6 mb-1 bg-gradient-to-tr from-amber-500 to-orange-600 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg shadow-orange-500/30 ring-4 ring-slate-900 active:scale-90 transition-transform"
+              className="-mt-5 mb-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl w-14 h-14 flex items-center justify-center shadow-lg ring-4 ring-white active:scale-95 transition-transform"
               aria-label="Nova Venda"
             >
-              <PlusCircle className="w-7 h-7" />
+              <Plus className="w-7 h-7" strokeWidth={2.4} />
             </button>
           </div>
-
           {bottomItems.slice(2).map(renderBottomItem)}
         </div>
       </nav>

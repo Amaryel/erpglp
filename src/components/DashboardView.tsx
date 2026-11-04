@@ -1,24 +1,16 @@
 import React, { useState, useMemo } from 'react';
 import {
   Package,
-  TrendingUp,
   Truck,
   Wallet,
   AlertTriangle,
-  Flame,
-  CheckCircle2,
-  Clock,
   CreditCard,
-  Layers,
-  ArrowUpRight,
-  ArrowDownRight,
-  PlusCircle,
+  Plus,
   ChevronRight,
-  Users,
-  ShieldAlert,
-  Database,
-  Cloud,
+  ArrowRight,
+  Receipt,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { useErp } from '../context/ErpContext';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { ActiveTab } from './Navbar';
@@ -156,518 +148,359 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Non-cylinder products count
   const otherProductsCount = products.filter((p) => !p.isCylinder).length;
 
+  const { currentUser } = useAuth();
+  const firstName = currentUser?.name.replace(/\s*\(.*?\)/g, '').split(' ')[0] || '';
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
+  const todayLabel = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+  const averageTicket = salesCount > 0 ? totalRevenue / salesCount : 0;
+  const cashOpen = cashRegister?.status === 'aberto';
+
+  const PERIODS = [
+    { id: 'hoje', label: 'Hoje' },
+    { id: 'ontem', label: 'Ontem' },
+    { id: '7dias', label: '7 dias' },
+    { id: 'este_mes', label: 'Este mês' },
+    { id: 'mes_anterior', label: 'Mês anterior' },
+    { id: 'custom', label: 'Período' },
+  ] as const;
+
+  const cylinderRows = products
+    .filter((p) => p.isActive && p.isCylinder)
+    .map((p) => {
+      const item = stock[p.id];
+      const full = item?.fullQuantity ?? 0;
+      const empty = item?.emptyQuantity ?? 0;
+      const min = p.minStock ?? 0;
+      const scale = Math.max(full, empty, min * 2, 1);
+      return { id: p.id, name: p.name, full, empty, min, low: min > 0 && full <= min, scale };
+    });
+
+  const alerts = [
+    criticalStockCount > 0 && {
+      key: 'estoque',
+      tone: 'rose',
+      icon: AlertTriangle,
+      text: `${criticalStockCount} produto(s) com estoque abaixo do mínimo`,
+      tab: 'estoque' as ActiveTab,
+    },
+    overdueReceivables > 0 && {
+      key: 'fiado',
+      tone: 'amber',
+      icon: CreditCard,
+      text: `${formatCurrency(overdueReceivables)} em fiado vencido`,
+      tab: 'receber' as ActiveTab,
+    },
+    overduePayables > 0 && {
+      key: 'pagar',
+      tone: 'rose',
+      icon: Receipt,
+      text: `${formatCurrency(overduePayables)} em contas a pagar vencidas`,
+      tab: 'pagar' as ActiveTab,
+    },
+  ].filter(Boolean) as { key: string; tone: 'rose' | 'amber'; icon: React.ElementType; text: string; tab: ActiveTab }[];
+
+  const card = 'bg-white rounded-xl border border-slate-200';
+  const linkBtn =
+    'inline-flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-900 rounded-md -mr-1 px-1 py-0.5';
+
   return (
-    <div className="space-y-4 sm:space-y-6 pb-12">
-      {/* Top Banner with Quick Actions & Online Status */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-4 sm:p-6 shadow-md relative overflow-hidden space-y-4">
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex flex-wrap items-center gap-2 mb-2">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-semibold border border-amber-500/30">
-                <Flame className="w-3.5 h-3.5" />
-                <span>Painel Operacional ErpGLP</span>
-              </div>
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold">
-                <Database className="w-3 h-3" />
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Banco de Dados Online Conectado (Supabase)</span>
-                {lastSyncTime && (
-                  <span className="text-[10px] text-slate-300 font-normal">({lastSyncTime})</span>
-                )}
-              </div>
-            </div>
-            <h1 className="text-xl sm:text-2xl font-black tracking-tight">
-              Visão Geral da Revenda
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-300 mt-0.5">
-              Controle imediato de botijões, entregas em rota, fluxo de caixa e lucro.
-            </p>
-          </div>
-
-          {/* Quick Buttons */}
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={onOpenNewSale}
-              className="bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-md shadow-orange-500/20 flex items-center gap-2 transition-transform"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span>Lançar Venda</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('em_andamento')}
-              className="bg-slate-700/80 hover:bg-slate-700 text-white font-bold text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-600 flex items-center gap-2 transition-colors relative"
-            >
-              <Truck className="w-4 h-4 text-amber-400" />
-              <span>Entregas</span>
-              {inProgressDeliveriesCount > 0 && (
-                <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-1.5 py-0.2 rounded-full">
-                  {inProgressDeliveriesCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              onClick={() => setActiveTab('caixa')}
-              className="bg-slate-700/80 hover:bg-slate-700 text-white font-bold text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-600 flex items-center gap-2 transition-colors"
-            >
-              <Wallet className="w-4 h-4 text-emerald-400" />
-              <span>Caixa</span>
-            </button>
-          </div>
+    <div className="space-y-6 pb-12">
+      {/* Cabeçalho */}
+      <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <p className="text-sm text-slate-500 first-letter:uppercase">{todayLabel}</p>
+          <h1 className="text-2xl sm:text-[28px] font-bold tracking-tight text-slate-900 mt-0.5">
+            {greeting}
+            {firstName ? `, ${firstName}` : ''}
+          </h1>
         </div>
-      </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveTab('em_andamento')}
+            className="h-10 px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+          >
+            <Truck className="w-4 h-4 text-slate-500" />
+            <span>Entregas</span>
+            {inProgressDeliveriesCount > 0 && (
+              <span className="min-w-5 h-5 px-1.5 rounded-full bg-orange-600 text-white text-xs font-semibold flex items-center justify-center">
+                {inProgressDeliveriesCount}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={onOpenNewSale}
+            className="lg:hidden h-10 px-4 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" strokeWidth={2.5} />
+            <span>Nova venda</span>
+          </button>
+        </div>
+      </header>
 
-      {/* Date Filter Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-2.5 rounded-xl border border-slate-200">
-        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider pl-1">
-          Período de Análise:
-        </span>
+      {/* Avisos */}
+      {alerts.length > 0 && (
+        <ul className={`${card} divide-y divide-slate-100 overflow-hidden`}>
+          {alerts.map((a) => {
+            const Icon = a.icon;
+            return (
+              <li key={a.key}>
+                <button
+                  onClick={() => setActiveTab(a.tab)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50"
+                >
+                  <span
+                    className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                      a.tone === 'rose' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                  </span>
+                  <span className="flex-1 text-sm text-slate-800">{a.text}</span>
+                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
-        <div className="flex flex-wrap items-center gap-1">
-          {(
-            [
-              { id: 'hoje', label: 'Hoje' },
-              { id: 'ontem', label: 'Ontem' },
-              { id: '7dias', label: '7 Dias' },
-              { id: 'este_mes', label: 'Este Mês' },
-              { id: 'mes_anterior', label: 'Mês Anterior' },
-              { id: 'custom', label: 'Personalizado' },
-            ] as const
-          ).map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setPeriod(item.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                period === item.id
-                  ? 'bg-amber-500 text-white shadow-xs'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+      {/* Resumo de vendas */}
+      <section className={card}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 pt-4">
+          <h2 className="text-base font-semibold text-slate-900">Resumo de vendas</h2>
+          <div className="flex items-center gap-0.5 p-0.5 bg-slate-100 rounded-lg overflow-x-auto max-w-full">
+            {PERIODS.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setPeriod(item.id)}
+                className={`h-8 px-3 rounded-md text-sm whitespace-nowrap transition-colors ${
+                  period === item.id
+                    ? 'bg-white text-slate-900 font-medium shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {period === 'custom' && (
-          <div className="flex items-center gap-2 w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+          <div className="flex flex-wrap items-center gap-2 px-4 sm:px-5 pt-3">
             <input
               type="date"
               value={customStart}
               onChange={(e) => setCustomStart(e.target.value)}
-              className="text-xs border border-slate-300 rounded-lg p-1.5"
+              aria-label="Data inicial"
+              className="h-9 text-sm border border-slate-300 rounded-lg px-2"
             />
-            <span className="text-xs text-slate-400">até</span>
+            <span className="text-sm text-slate-400">até</span>
             <input
               type="date"
               value={customEnd}
               onChange={(e) => setCustomEnd(e.target.value)}
-              className="text-xs border border-slate-300 rounded-lg p-1.5"
+              aria-label="Data final"
+              className="h-9 text-sm border border-slate-300 rounded-lg px-2"
             />
           </div>
         )}
-      </div>
 
-      {/* Urgent Alerts Banner (if any) */}
-      {(inProgressDeliveriesCount > 0 || criticalStockCount > 0 || overdueReceivables > 0) && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          {inProgressDeliveriesCount > 0 && (
+        <dl className="grid grid-cols-2 lg:grid-cols-4 mt-4 border-t border-slate-100">
+          {[
+            {
+              label: 'Faturamento',
+              value: formatCurrency(totalRevenue),
+              sub: `${salesCount} venda${salesCount === 1 ? '' : 's'} finalizada${salesCount === 1 ? '' : 's'}`,
+            },
+            {
+              label: 'Lucro bruto',
+              value: formatCurrency(grossProfit),
+              sub: `Margem de ${profitMargin.toFixed(1).replace('.', ',')}%`,
+              accent: grossProfit > 0 ? 'text-emerald-700' : undefined,
+            },
+            {
+              label: 'Ticket médio',
+              value: formatCurrency(averageTicket),
+              sub: `Custo dos produtos ${formatCurrency(totalCost)}`,
+            },
+            {
+              label: 'Fiado em aberto',
+              value: formatCurrency(totalReceivables),
+              sub: overdueReceivables > 0 ? `${formatCurrency(overdueReceivables)} vencido` : 'Nada vencido',
+              onClick: () => setActiveTab('receber'),
+            },
+          ].map((m, i) => (
             <div
-              onClick={() => setActiveTab('em_andamento')}
-              className="bg-amber-50 border border-amber-300/80 rounded-xl p-2.5 flex items-center justify-between cursor-pointer hover:bg-amber-100 transition-colors"
+              key={m.label}
+              onClick={m.onClick}
+              className={`px-4 sm:px-5 py-4 ${i % 2 === 1 ? 'border-l border-slate-100' : ''} ${
+                i >= 2 ? 'border-t lg:border-t-0 border-slate-100' : ''
+              } ${i === 2 ? 'lg:border-l' : ''} ${m.onClick ? 'cursor-pointer hover:bg-slate-50' : ''}`}
             >
-              <div className="flex items-center gap-2">
-                <Truck className="w-4 h-4 text-amber-600 shrink-0" />
-                <span className="text-xs font-bold text-amber-900">
-                  {inProgressDeliveriesCount} entregas em andamento
-                </span>
-              </div>
-              <ChevronRight className="w-4 h-4 text-amber-600" />
+              <dt className="text-sm text-slate-500">{m.label}</dt>
+              <dd className={`mt-1 text-xl sm:text-2xl font-semibold tracking-tight tabular-nums ${m.accent || 'text-slate-900'}`}>
+                {m.value}
+              </dd>
+              <dd className="mt-0.5 text-xs text-slate-500">{m.sub}</dd>
             </div>
-          )}
+          ))}
+        </dl>
+      </section>
 
-          {criticalStockCount > 0 && (
-            <div
-              onClick={() => setActiveTab('estoque')}
-              className="bg-rose-50 border border-rose-300/80 rounded-xl p-2.5 flex items-center justify-between cursor-pointer hover:bg-rose-100 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                <span className="text-xs font-bold text-rose-900">
-                  {criticalStockCount} produtos com estoque baixo
-                </span>
-              </div>
-              <ChevronRight className="w-4 h-4 text-rose-600" />
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        {/* Estoque de botijões */}
+        <section className={`${card} lg:col-span-3`}>
+          <div className="flex items-center justify-between px-4 sm:px-5 pt-4 pb-3">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Botijões</h2>
+              <p className="text-sm text-slate-500 tabular-nums">
+                {totalFullCylinders} cheios · {totalEmptyCylinders} vazios
+              </p>
             </div>
-          )}
-
-          {overdueReceivables > 0 && (
-            <div
-              onClick={() => setActiveTab('receber')}
-              className="bg-orange-50 border border-orange-300/80 rounded-xl p-2.5 flex items-center justify-between cursor-pointer hover:bg-orange-100 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <CreditCard className="w-4 h-4 text-orange-600 shrink-0" />
-                <span className="text-xs font-bold text-orange-900">
-                  {formatCurrency(overdueReceivables)} fiados vencidos
-                </span>
-              </div>
-              <ChevronRight className="w-4 h-4 text-orange-600" />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* SECTION 1: ESTOQUE CARDS */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-            <Package className="w-4 h-4 text-amber-500" />
-            <span>Estoque & Vasilhames em Tempo Real</span>
-          </h2>
-          <button
-            onClick={() => setActiveTab('estoque')}
-            className="text-xs text-amber-600 hover:text-amber-700 font-semibold"
-          >
-            Ver Detalhes →
-          </button>
-        </div>
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
-          {/* Card Cheios */}
-          <div
-            onClick={() => setActiveTab('estoque')}
-            className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-amber-400 transition-all"
-          >
-            <div className="flex items-center justify-between text-slate-500 mb-1">
-              <span className="text-xs font-semibold">Botijões Cheios</span>
-              <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                <Flame className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="text-2xl sm:text-3xl font-black text-slate-900">
-              {totalFullCylinders}
-            </div>
-            <p className="text-[11px] text-emerald-700 font-medium mt-0.5">
-              Prontos para venda/entrega
-            </p>
-          </div>
-
-          {/* Card Vazios */}
-          <div
-            onClick={() => setActiveTab('estoque')}
-            className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-amber-400 transition-all"
-          >
-            <div className="flex items-center justify-between text-slate-500 mb-1">
-              <span className="text-xs font-semibold">Vasilhames Vazios</span>
-              <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
-                <Package className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="text-2xl sm:text-3xl font-black text-slate-900">
-              {totalEmptyCylinders}
-            </div>
-            <p className="text-[11px] text-blue-700 font-medium mt-0.5">
-              No pátio aguardando recarga
-            </p>
-          </div>
-
-          {/* Card Outros Produtos */}
-          <div
-            onClick={() => setActiveTab('produtos')}
-            className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-amber-400 transition-all"
-          >
-            <div className="flex items-center justify-between text-slate-500 mb-1">
-              <span className="text-xs font-semibold">Outros Produtos</span>
-              <div className="w-7 h-7 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center">
-                <Layers className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="text-2xl sm:text-3xl font-black text-slate-900">
-              {otherProductsCount}
-            </div>
-            <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-              Água, reguladores, mangueiras
-            </p>
-          </div>
-
-          {/* Card Estoque Mínimo */}
-          <div
-            onClick={() => setActiveTab('estoque')}
-            className={`p-3.5 rounded-2xl border shadow-xs cursor-pointer transition-all ${
-              criticalStockCount > 0
-                ? 'bg-rose-50/50 border-rose-300 hover:border-rose-500'
-                : 'bg-white border-slate-200 hover:border-amber-400'
-            }`}
-          >
-            <div className="flex items-center justify-between text-slate-500 mb-1">
-              <span className="text-xs font-semibold">Estoque Crítico</span>
-              <div
-                className={`w-7 h-7 rounded-lg flex items-center justify-center ${
-                  criticalStockCount > 0
-                    ? 'bg-rose-100 text-rose-700'
-                    : 'bg-slate-100 text-slate-600'
-                }`}
-              >
-                <AlertTriangle className="w-4 h-4" />
-              </div>
-            </div>
-            <div
-              className={`text-2xl sm:text-3xl font-black ${
-                criticalStockCount > 0 ? 'text-rose-600' : 'text-slate-900'
-              }`}
-            >
-              {criticalStockCount}
-            </div>
-            <p
-              className={`text-[11px] font-medium mt-0.5 ${
-                criticalStockCount > 0 ? 'text-rose-700' : 'text-slate-500'
-              }`}
-            >
-              {criticalStockCount > 0 ? 'Itens abaixo do mínimo' : 'Tudo regular'}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* SECTION 2: VENDAS & LUCRO CARDS */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-            <TrendingUp className="w-4 h-4 text-emerald-600" />
-            <span>Vendas & Lucro Bruto ({period})</span>
-          </h2>
-          <button
-            onClick={() => setActiveTab('lucro')}
-            className="text-xs text-emerald-600 hover:text-emerald-700 font-semibold"
-          >
-            Demonstrativo de Lucro →
-          </button>
-        </div>
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
-          {/* Card Faturamento */}
-          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
-            <span className="text-xs font-semibold text-slate-500 block mb-1">
-              Faturamento no Período
-            </span>
-            <div className="text-xl sm:text-2xl font-black text-slate-900">
-              {formatCurrency(totalRevenue)}
-            </div>
-            <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-              {salesCount} vendas finalizadas
-            </p>
-          </div>
-
-          {/* Card Custo das Mercadorias */}
-          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
-            <span className="text-xs font-semibold text-slate-500 block mb-1">
-              Custo dos Produtos Vendidos
-            </span>
-            <div className="text-xl sm:text-2xl font-black text-slate-700">
-              {formatCurrency(totalCost)}
-            </div>
-            <p className="text-[11px] text-slate-400 font-medium mt-0.5">
-              Congelado no ato da venda
-            </p>
-          </div>
-
-          {/* Card Lucro Bruto */}
-          <div className="bg-emerald-50/70 p-3.5 rounded-2xl border border-emerald-300 shadow-xs">
-            <span className="text-xs font-bold text-emerald-900 block mb-1">
-              Lucro Bruto do Período
-            </span>
-            <div className="text-xl sm:text-2xl font-black text-emerald-700">
-              {formatCurrency(grossProfit)}
-            </div>
-            <p className="text-[11px] text-emerald-800 font-semibold mt-0.5">
-              Margem bruta: {profitMargin.toFixed(1)}%
-            </p>
-          </div>
-
-          {/* Card Fiado / A Receber gerado */}
-          <div
-            onClick={() => setActiveTab('receber')}
-            className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-orange-400 transition-all"
-          >
-            <div className="flex items-center justify-between text-slate-500 mb-1">
-              <span className="text-xs font-semibold">Total a Receber (Fiados)</span>
-              <CreditCard className="w-4 h-4 text-orange-500" />
-            </div>
-            <div className="text-xl sm:text-2xl font-black text-orange-600">
-              {formatCurrency(totalReceivables)}
-            </div>
-            <p className="text-[11px] text-orange-700 font-medium mt-0.5">
-              {overdueReceivables > 0 ? `${formatCurrency(overdueReceivables)} vencido` : 'Em dia'}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* SECTION 3: ENTREGAS & CAIXA */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-        {/* Entregas Card Box */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
-                <Truck className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">Entregas Delivery</h3>
-                <span className="text-[11px] text-slate-500">
-                  {inProgressDeliveriesCount} em rota no momento
-                </span>
-              </div>
-            </div>
-            <button
-              onClick={() => setActiveTab('em_andamento')}
-              className="text-xs font-bold text-amber-600 hover:text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200"
-            >
-              Abrir Painel →
+            <button onClick={() => setActiveTab('estoque')} className={linkBtn}>
+              Ver estoque <ArrowRight className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 text-center pt-1">
-            <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-200">
-              <span className="text-[11px] font-semibold text-amber-800 block">
-                Aguardando Saída
-              </span>
-              <span className="text-lg font-black text-amber-900">
-                {pendingDeliveries}
-              </span>
-            </div>
-            <div className="bg-blue-50 p-2.5 rounded-xl border border-blue-200">
-              <span className="text-[11px] font-semibold text-blue-800 block">
-                Em Rota (Rua)
-              </span>
-              <span className="text-lg font-black text-blue-900">
-                {onTheWayDeliveries}
-              </span>
-            </div>
-            <div className="bg-purple-50 p-2.5 rounded-xl border border-purple-200">
-              <span className="text-[11px] font-semibold text-purple-800 block">
-                No Cliente
-              </span>
-              <span className="text-lg font-black text-purple-900">
-                {waitingFinalizeDeliveries}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Caixa Status Box */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                <Wallet className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">Caixa do Dia</h3>
-                <span className="text-[11px] text-slate-500">
-                  Status: {cashRegister?.status === 'aberto' ? 'Aberto' : 'Fechado'}
-                </span>
-              </div>
-            </div>
+          {cylinderRows.length === 0 ? (
+            <p className="px-5 pb-5 text-sm text-slate-500">Nenhum botijão cadastrado em Produtos.</p>
+          ) : (
+            <ul className="divide-y divide-slate-100 border-t border-slate-100">
+              {cylinderRows.map((r) => (
+                <li key={r.id} className="px-4 sm:px-5 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-medium text-slate-800 truncate">{r.name}</span>
+                    {r.low && (
+                      <span className="text-xs font-medium text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full shrink-0">
+                        Abaixo do mínimo
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1.5 text-xs text-slate-500">
+                    <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${r.low ? 'bg-rose-500' : 'bg-slate-800'}`}
+                        style={{ width: `${Math.min(100, (r.full / r.scale) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="tabular-nums w-24 text-right">
+                      <strong className="font-semibold text-slate-900">{r.full}</strong> cheios
+                    </span>
+                    <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-slate-300"
+                        style={{ width: `${Math.min(100, (r.empty / r.scale) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="tabular-nums w-24 text-right">
+                      <strong className="font-semibold text-slate-900">{r.empty}</strong> vazios
+                    </span>
+                  </div>
+                  {r.min > 0 && <p className="mt-1.5 text-xs text-slate-400">Mínimo: {r.min} cheios</p>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {otherProductsCount > 0 && (
             <button
-              onClick={() => setActiveTab('caixa')}
-              className="text-xs font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200"
+              onClick={() => setActiveTab('produtos')}
+              className="w-full text-left px-4 sm:px-5 py-3 border-t border-slate-100 text-sm text-slate-500 hover:bg-slate-50 rounded-b-xl"
             >
-              Movimentar Caixa →
+              + {otherProductsCount} outro(s) produto(s) (água, reguladores, mangueiras)
             </button>
-          </div>
+          )}
+        </section>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-            <div className="bg-slate-50 p-2 rounded-xl border border-slate-100">
-              <span className="text-[10px] text-slate-500 block">Saldo Inicial</span>
-              <span className="text-xs font-bold text-slate-800">
-                {formatCurrency(cashRegister?.initialBalance || 0)}
-              </span>
+        <div className="lg:col-span-2 space-y-6">
+          {/* Entregas */}
+          <section className={card}>
+            <div className="flex items-center justify-between px-4 sm:px-5 pt-4">
+              <h2 className="text-base font-semibold text-slate-900">Entregas</h2>
+              <button onClick={() => setActiveTab('em_andamento')} className={linkBtn}>
+                Abrir <ArrowRight className="w-4 h-4" />
+              </button>
             </div>
-            <div className="bg-emerald-50/50 p-2 rounded-xl border border-emerald-100">
-              <span className="text-[10px] text-emerald-700 block">+ Entradas</span>
-              <span className="text-xs font-bold text-emerald-800">
-                {formatCurrency(todayCashEntries)}
-              </span>
+            <dl className="grid grid-cols-3 px-4 sm:px-5 py-4 gap-3">
+              {[
+                { label: 'Aguardando', value: pendingDeliveries },
+                { label: 'Em rota', value: onTheWayDeliveries },
+                { label: 'No cliente', value: waitingFinalizeDeliveries },
+              ].map((d) => (
+                <div key={d.label}>
+                  <dt className="text-xs text-slate-500">{d.label}</dt>
+                  <dd className="text-2xl font-semibold tabular-nums text-slate-900 mt-0.5">{d.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          {/* Caixa */}
+          <section className={card}>
+            <div className="flex items-center justify-between px-4 sm:px-5 pt-4">
+              <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                Caixa
+                <span
+                  className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                    cashOpen ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {cashOpen ? 'Aberto' : 'Fechado'}
+                </span>
+              </h2>
+              <button onClick={() => setActiveTab('caixa')} className={linkBtn}>
+                {cashOpen ? 'Movimentar' : 'Abrir caixa'} <ArrowRight className="w-4 h-4" />
+              </button>
             </div>
-            <div className="bg-rose-50/50 p-2 rounded-xl border border-rose-100">
-              <span className="text-[10px] text-rose-700 block">- Saídas</span>
-              <span className="text-xs font-bold text-rose-800">
-                {formatCurrency(todayCashExits)}
-              </span>
-            </div>
-            <div className="bg-emerald-100/70 p-2 rounded-xl border border-emerald-200">
-              <span className="text-[10px] text-emerald-900 font-bold block">
-                Saldo Atual
-              </span>
-              <span className="text-xs font-black text-emerald-900">
+            <div className="px-4 sm:px-5 py-4">
+              <p className="text-xs text-slate-500">Saldo atual</p>
+              <p className="text-2xl font-semibold tracking-tight tabular-nums text-slate-900 mt-0.5">
                 {formatCurrency(cashRegister?.currentBalance || 0)}
-              </span>
+              </p>
+              <dl className="mt-3 grid grid-cols-3 gap-3 text-xs">
+                <div>
+                  <dt className="text-slate-500">Abertura</dt>
+                  <dd className="font-medium text-slate-800 tabular-nums mt-0.5">
+                    {formatCurrency(cashRegister?.initialBalance || 0)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Entradas hoje</dt>
+                  <dd className="font-medium text-emerald-700 tabular-nums mt-0.5">{formatCurrency(todayCashEntries)}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Saídas hoje</dt>
+                  <dd className="font-medium text-rose-700 tabular-nums mt-0.5">{formatCurrency(todayCashExits)}</dd>
+                </div>
+              </dl>
             </div>
-          </div>
+          </section>
         </div>
       </div>
 
-      {/* SECTION 4: CONTAS A PAGAR RESUMO */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-slate-600" />
-            <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-              Contas a Pagar & Obrigações
-            </h3>
-          </div>
-          <button
-            onClick={() => setActiveTab('pagar')}
-            className="text-xs text-amber-600 hover:text-amber-700 font-semibold"
-          >
-            Gerenciar Contas →
+      {/* Contas */}
+      <section className={card}>
+        <div className="flex items-center justify-between px-4 sm:px-5 pt-4 pb-3">
+          <h2 className="text-base font-semibold text-slate-900">Contas a pagar</h2>
+          <button onClick={() => setActiveTab('pagar')} className={linkBtn}>
+            Ver contas <ArrowRight className="w-4 h-4" />
           </button>
         </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-          <div
-            onClick={() => setActiveTab('pagar')}
-            className={`p-3 rounded-xl border cursor-pointer transition-all ${
-              overduePayables > 0
-                ? 'bg-rose-50/80 border-rose-300 hover:bg-rose-100'
-                : 'bg-slate-50 border-slate-200'
-            }`}
-          >
-            <div className="flex justify-between items-center">
-              <span className="font-semibold text-slate-700">Contas Vencidas:</span>
-              <span
-                className={`font-black text-sm ${
-                  overduePayables > 0 ? 'text-rose-600' : 'text-slate-800'
-                }`}
-              >
-                {formatCurrency(overduePayables)}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              {overduePayables > 0
-                ? 'Existem contas vencidas que precisam de atenção.'
-                : 'Nenhuma conta vencida.'}
-            </p>
+        <dl className="grid grid-cols-2 border-t border-slate-100">
+          <div className="px-4 sm:px-5 py-4">
+            <dt className="text-sm text-slate-500">Vencidas</dt>
+            <dd
+              className={`mt-1 text-xl font-semibold tabular-nums ${overduePayables > 0 ? 'text-rose-600' : 'text-slate-900'}`}
+            >
+              {formatCurrency(overduePayables)}
+            </dd>
           </div>
-
-          <div
-            onClick={() => setActiveTab('pagar')}
-            className="p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 cursor-pointer transition-all"
-          >
-            <div className="flex justify-between items-center">
-              <span className="font-semibold text-slate-700">Vencendo nos Próximos 7 Dias:</span>
-              <span className="font-black text-sm text-slate-800">
-                {formatCurrency(upcomingPayables)}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              Previsão de saídas da semana
-            </p>
+          <div className="px-4 sm:px-5 py-4 border-l border-slate-100">
+            <dt className="text-sm text-slate-500">Próximos 7 dias</dt>
+            <dd className="mt-1 text-xl font-semibold tabular-nums text-slate-900">{formatCurrency(upcomingPayables)}</dd>
           </div>
-        </div>
-      </div>
+        </dl>
+      </section>
     </div>
   );
 };

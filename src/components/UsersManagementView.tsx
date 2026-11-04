@@ -224,7 +224,7 @@ export const UsersManagementView: React.FC = () => {
 
   const renderRole = (u: AppUser) => (
     <span
-      className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${
+      className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${
         u.role === 'superadmin'
           ? 'bg-amber-100 text-amber-900 border border-amber-300'
           : u.role === 'admin'
@@ -351,19 +351,13 @@ export const UsersManagementView: React.FC = () => {
   return (
     <div className="space-y-4 pb-12">
       {/* Header */}
-      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-slate-900 text-amber-400 flex items-center justify-center shadow-inner">
-            <Users className="w-5 h-5" />
-          </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-lg sm:text-xl font-black text-slate-900">
-                Gerenciamento de Usuários
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+                Usuários
               </h1>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 uppercase">
-                Controle de Acesso
-              </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
               Cadastre operadores, defina senhas e bloqueie/desbloqueie acessos de outros aparelhos

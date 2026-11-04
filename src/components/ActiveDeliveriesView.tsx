@@ -70,12 +70,9 @@ export const ActiveDeliveriesView: React.FC<ActiveDeliveriesViewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
         <div>
           <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-amber-500/15 flex items-center justify-center text-amber-600">
-              <Truck className="w-5 h-5" />
-            </div>
             <div>
-              <h1 className="text-lg sm:text-xl font-black text-slate-900 flex items-center gap-2">
-                Vendas em Andamento
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+                Entregas em andamento
                 <span className="bg-amber-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
                   {activeSales.length}
                 </span>
@@ -319,7 +316,7 @@ export const ActiveDeliveriesView: React.FC<ActiveDeliveriesViewProps> = ({
                   <button
                     id={`btn-finalizar-venda-${sale.saleNumber}`}
                     onClick={() => setSelectedSaleToFinalize(sale)}
-                    className="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 active:scale-98 text-white font-black text-sm sm:text-base rounded-xl shadow-md shadow-emerald-700/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-black text-sm sm:text-base rounded-xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer"
                   >
                     <CheckCircle2 className="w-5 h-5" />
                     <span>FINALIZAR VENDA</span>

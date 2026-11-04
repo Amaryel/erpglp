@@ -291,7 +291,7 @@ export const NewSaleModal: React.FC<NewSaleModalProps> = ({
           {saleType === 'delivery' && (
             <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3 space-y-3">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
+                <label className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
                   <Truck className="w-3.5 h-3.5 text-amber-600" />
                   <span>Cliente do Delivery</span>
                   {deliveryPaymentMethod === 'fiado' ? (
@@ -361,7 +361,7 @@ export const NewSaleModal: React.FC<NewSaleModalProps> = ({
                     </span>
                     <span className="text-[11px] text-slate-500">
                       {deliveryPaymentMethod === 'fiado'
-                        ? '⚠️ FIADO exige cliente cadastrado'
+                        ? 'Fiado exige cliente cadastrado'
                         : 'Não é obrigatório cadastrar'}
                     </span>
                   </div>
@@ -539,7 +539,7 @@ export const NewSaleModal: React.FC<NewSaleModalProps> = ({
 
           {/* Product Quick Picker Buttons */}
           <div>
-            <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1.5">
+            <label className="text-xs font-bold text-slate-700 block mb-1.5">
               1. Selecione os Produtos:
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -589,7 +589,7 @@ export const NewSaleModal: React.FC<NewSaleModalProps> = ({
 
           {/* Cart Table / Item List */}
           <div>
-            <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1.5">
+            <label className="text-xs font-bold text-slate-700 block mb-1.5">
               2. Itens da Venda:
             </label>
             {cart.length === 0 ? (
@@ -676,7 +676,7 @@ export const NewSaleModal: React.FC<NewSaleModalProps> = ({
           {saleType === 'balcao' && cart.length > 0 && (
             <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3 space-y-3">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-emerald-950 uppercase tracking-wider flex items-center gap-1.5">
+                <label className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
                   <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
                   <span>Pagamento do Balcão</span>
                 </label>
@@ -822,8 +822,8 @@ export const NewSaleModal: React.FC<NewSaleModalProps> = ({
               disabled={cart.length === 0}
               className={`px-5 py-2.5 rounded-xl font-bold text-sm text-white shadow-md flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none ${
                 saleType === 'delivery'
-                  ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 shadow-orange-500/20'
-                  : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
+                  ? 'bg-orange-600 hover:bg-orange-700'
+                  : 'bg-emerald-600 hover:bg-emerald-700'
               }`}
             >
               <Check className="w-4 h-4" />

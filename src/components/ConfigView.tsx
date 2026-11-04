@@ -413,17 +413,14 @@ export const ConfigView: React.FC = () => {
   return (
     <div className="space-y-4 pb-12">
       {/* Header */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-slate-800 text-amber-400 flex items-center justify-center">
-            <Settings className="w-5 h-5" />
-          </div>
           <div>
-            <h1 className="text-lg sm:text-xl font-black text-slate-900">
-              Configurações & Banco de Dados Online
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+              Configurações
             </h1>
-            <p className="text-xs text-slate-500">
-              Gerencie a conexão online com o Supabase, dados da empresa, comprovantes e backup
+            <p className="text-sm text-slate-500 mt-0.5">
+              Dados da empresa, cadastros auxiliares e backup.
             </p>
           </div>
         </div>
@@ -464,7 +461,7 @@ export const ConfigView: React.FC = () => {
 
       {/* SECTION 1: SUPABASE ONLINE DATABASE INTEGRATION (PROMINENT - EXCLUSIVE TO SUPERADMIN) */}
       {isSuperadmin ? (
-        <div className="bg-gradient-to-br from-slate-900 via-slate-850 to-slate-900 rounded-3xl p-5 sm:p-6 text-white border border-slate-800 shadow-lg space-y-5">
+        <div className="bg-slate-900 rounded-3xl p-5 sm:p-6 text-white border border-slate-800 shadow-lg space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-inner shrink-0">
@@ -476,13 +473,13 @@ export const ConfigView: React.FC = () => {
                     Banco de Dados Online (Supabase)
                   </h2>
                   <span
-                    className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
+                    className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
                       isOnlineDb
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                         : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                     }`}
                   >
-                    {isOnlineDb ? '🟢 Conectado & Online' : '🟡 Modo Local (Offline)'}
+                    {isOnlineDb ? 'Conectado & Online' : '🟡 Modo Local (Offline)'}
                   </span>
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
                     Exclusivo Superadmin
@@ -610,7 +607,7 @@ export const ConfigView: React.FC = () => {
                   <div className="flex items-center justify-between text-slate-300">
                     <span className="font-semibold text-slate-400">Ambiente Online:</span>
                     <span className="font-bold text-emerald-400 flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
                       Supabase Cloud
                     </span>
                   </div>
@@ -644,7 +641,7 @@ export const ConfigView: React.FC = () => {
                   type="button"
                   onClick={() => handleSaveAndConnectDb({ preventDefault: () => {} } as any)}
                   disabled={testingDb}
-                  className="bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-md transition-all flex items-center gap-1.5 disabled:opacity-50"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-md transition-all flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {testingDb ? (
                     <>
@@ -663,7 +660,7 @@ export const ConfigView: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 rounded-2xl p-4 sm:p-5 text-white border border-slate-800 shadow-sm flex items-center justify-between">
+        <div className="bg-slate-900 rounded-2xl p-4 sm:p-5 text-white border border-slate-800 shadow-sm flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30 shrink-0">
               <Database className="w-5 h-5" />
@@ -671,7 +668,7 @@ export const ConfigView: React.FC = () => {
             <div>
               <div className="font-bold text-sm text-white flex items-center gap-2">
                 <span>Banco de Dados Online Conectado (Supabase)</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
                 Sincronização em tempo real ativa. Alterações estruturais de banco e scripts SQL são restritos ao Superadmin.

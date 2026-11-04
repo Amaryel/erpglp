@@ -108,15 +108,12 @@ export const CashRegisterView: React.FC = () => {
   return (
     <div className="space-y-4 pb-12">
       {/* Top Header */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center text-emerald-600">
-            <Wallet className="w-5 h-5" />
-          </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-lg sm:text-xl font-black text-slate-900">
-                Controle de Caixa
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+                Caixa
               </h1>
               <span
                 className={`text-xs font-bold px-2 py-0.5 rounded-full ${
@@ -225,7 +222,7 @@ export const CashRegisterView: React.FC = () => {
 
       {/* Breakdown by Payment Method */}
       <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-2">
-        <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+        <h3 className="text-xs font-bold text-slate-600">
           Entradas por Meio de Pagamento
         </h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">

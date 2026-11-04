@@ -89,7 +89,7 @@ const MainLayout: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans antialiased text-slate-900">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans antialiased text-slate-900">
       {/* Top and Mobile/Desktop Navigation */}
       <Navbar
         activeTab={activeTab}
@@ -105,38 +105,33 @@ const MainLayout: React.FC = () => {
       {/* Main Content Wrapper: dynamically offsets content on desktop so it never overlaps with sidebar */}
       <div
         className={`transition-[padding] duration-300 flex-1 flex flex-col min-w-0 ${
-          sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'
+          sidebarCollapsed ? 'lg:pl-[68px]' : 'lg:pl-60'
         }`}
       >
-        <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-6 pt-3 sm:pt-4 pb-28 lg:pb-8 min-w-0">
+        <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-28 lg:pb-10 min-w-0">
           {activeTab !== 'dashboard' && (
-            <nav aria-label="Navegação da página" className="flex items-center gap-2 mb-3">
+            <nav aria-label="Navegação da página" className="flex items-center gap-1 mb-2 -ml-2 text-sm">
               <button
                 type="button"
                 onClick={goBack}
-                className="inline-flex items-center gap-1.5 h-10 pl-2.5 pr-3.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-semibold shadow-xs hover:bg-slate-50 active:scale-95 transition-all"
+                className="inline-flex items-center gap-1.5 h-9 px-2 rounded-lg text-slate-600 font-medium hover:text-slate-900 hover:bg-slate-100 transition-colors"
               >
                 <ArrowLeft className="w-4 h-4" />
                 <span>Voltar</span>
               </button>
-              <ol className="flex items-center gap-1 text-xs text-slate-500 min-w-0">
-                <li className="hidden sm:block">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('dashboard')}
-                    className="inline-flex items-center gap-1 h-10 px-2 rounded-lg hover:text-slate-900 hover:bg-white"
-                  >
-                    <Home className="w-3.5 h-3.5" />
-                    <span>Início</span>
-                  </button>
-                </li>
-                <li aria-hidden="true" className="hidden sm:block">
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </li>
-                <li className="font-semibold text-slate-800 truncate" aria-current="page">
-                  {TAB_LABELS[activeTab]}
-                </li>
-              </ol>
+              <span aria-hidden="true" className="text-slate-300 px-1">/</span>
+              <button
+                type="button"
+                onClick={() => setActiveTab('dashboard')}
+                className="hidden sm:inline-flex items-center gap-1 h-9 px-1.5 rounded-lg text-slate-500 hover:text-slate-900"
+              >
+                <Home className="w-3.5 h-3.5" />
+                <span>Início</span>
+              </button>
+              <ChevronRight aria-hidden="true" className="hidden sm:block w-3.5 h-3.5 text-slate-300" />
+              <span className="px-1.5 text-slate-900 font-medium truncate" aria-current="page">
+                {TAB_LABELS[activeTab]}
+              </span>
             </nav>
           )}
 
@@ -200,9 +195,9 @@ const AuthGate: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen w-full bg-slate-950 flex flex-col items-center justify-center text-white p-4">
-        <RefreshCw className="w-8 h-8 text-amber-500 animate-spin mb-3" />
-        <span className="text-xs font-bold text-slate-300">Carregando sistema de gestão...</span>
+      <div className="min-h-screen w-full bg-slate-50 flex flex-col items-center justify-center p-4">
+        <RefreshCw className="w-6 h-6 text-orange-600 animate-spin mb-3" />
+        <span className="text-sm text-slate-500">Carregando…</span>
       </div>
     );
   }

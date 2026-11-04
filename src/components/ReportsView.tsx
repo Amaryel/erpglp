@@ -213,17 +213,14 @@ export const ReportsView: React.FC = () => {
   return (
     <div className="space-y-4 pb-12">
       {/* Header */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-indigo-500/15 flex items-center justify-center text-indigo-600">
-            <FileText className="w-5 h-5" />
-          </div>
           <div>
-            <h1 className="text-lg sm:text-xl font-black text-slate-900">
-              Relatórios Gerenciais & DRE
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+              Relatórios
             </h1>
-            <p className="text-xs text-slate-500">
-              Dados consolidados em tempo real de vendas, estoque, fluxo de caixa e rentabilidade líquida
+            <p className="text-sm text-slate-500 mt-0.5">
+              Vendas, estoque e financeiro consolidados.
             </p>
           </div>
         </div>
