@@ -20,6 +20,8 @@ import { NumberField } from './NumberField';
 import { Product, DeliveryPerson } from '../types';
 import { formatCurrency } from '../utils/formatters';
 
+const roundMoney = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
+
 type Tab = 'produtos' | 'entregadores';
 
 export const ProductsView: React.FC = () => {
@@ -42,7 +44,10 @@ export const ProductsView: React.FC = () => {
   const [editingProdId, setEditingProdId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Gás GLP');
-  const [costPrice, setCostPrice] = useState<number>(0);
+  // Composição do custo por unidade: produto (ex.: gás) + frete + impostos
+  const [baseCost, setBaseCost] = useState<number>(0);
+  const [freightCost, setFreightCost] = useState<number>(0);
+  const [taxCost, setTaxCost] = useState<number>(0);
   const [sellPrice, setSellPrice] = useState<number>(0);
   const [minStock, setMinStock] = useState<number>(10);
   const [isCylinder, setIsCylinder] = useState(true);
@@ -76,7 +81,9 @@ export const ProductsView: React.FC = () => {
     setEditingProdId(null);
     setName('');
     setCategory('Gás GLP');
-    setCostPrice(0);
+    setBaseCost(0);
+    setFreightCost(0);
+    setTaxCost(0);
     setSellPrice(0);
     setMinStock(10);
     setIsCylinder(true);
@@ -88,7 +95,11 @@ export const ProductsView: React.FC = () => {
     setEditingProdId(p.id);
     setName(p.name);
     setCategory(p.category || 'Gás GLP');
-    setCostPrice(p.costPrice);
+    // Produtos antigos só têm o custo total: ele vira o custo do produto
+    const hasBreakdown = (p.freightCost ?? 0) > 0 || (p.taxCost ?? 0) > 0 || p.baseCost != null;
+    setBaseCost(hasBreakdown ? p.baseCost ?? 0 : p.costPrice);
+    setFreightCost(p.freightCost ?? 0);
+    setTaxCost(p.taxCost ?? 0);
     setSellPrice(p.sellPrice);
     setMinStock(p.minStock ?? 10);
     setIsCylinder(p.isCylinder);
@@ -96,15 +107,25 @@ export const ProductsView: React.FC = () => {
     setShowProductModal(true);
   };
 
+  const totalCost = roundMoney(Number(baseCost) + Number(freightCost) + Number(taxCost));
+  const previewProfit = roundMoney(Number(sellPrice) - totalCost);
+  const previewMargin = Number(sellPrice) > 0 ? (previewProfit / Number(sellPrice)) * 100 : 0;
+
   const handleSaveProduct = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
+    const costs = {
+      costPrice: totalCost,
+      baseCost: roundMoney(Number(baseCost)),
+      freightCost: roundMoney(Number(freightCost)),
+      taxCost: roundMoney(Number(taxCost)),
+    };
 
     if (editingProdId) {
       updateProduct(editingProdId, {
         name: name.trim(),
         category,
-        costPrice: Number(costPrice),
+        ...costs,
         sellPrice: Number(sellPrice),
         minStock: Number(minStock),
         isCylinder,
@@ -114,7 +135,7 @@ export const ProductsView: React.FC = () => {
       addProduct({
         name: name.trim(),
         category,
-        costPrice: Number(costPrice),
+        ...costs,
         sellPrice: Number(sellPrice),
         minStock: Number(minStock),
         isCylinder,
@@ -353,9 +374,15 @@ export const ProductsView: React.FC = () => {
                   {/* Financials of the product */}
                   <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-xs space-y-1">
                     <div className="flex justify-between text-slate-600">
-                      <span>Custo de Reposição:</span>
+                      <span>Custo total:</span>
                       <span className="font-semibold">{formatCurrency(p.costPrice)}</span>
                     </div>
+                    {((p.freightCost ?? 0) > 0 || (p.taxCost ?? 0) > 0) && (
+                      <p className="text-[11px] text-slate-500 tabular-nums -mt-0.5">
+                        Produto {formatCurrency(p.baseCost ?? 0)} · Frete {formatCurrency(p.freightCost ?? 0)} · Impostos{' '}
+                        {formatCurrency(p.taxCost ?? 0)}
+                      </p>
+                    )}
                     <div className="flex justify-between text-slate-900 font-bold">
                       <span>Preço de Venda:</span>
                       <span className="text-base text-emerald-700 font-black">
@@ -494,31 +521,86 @@ export const ProductsView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">
-                    Preço de Custo (R$) *
-                  </label>
-                  <NumberField
-                    min="0"
-                    required
-                    value={costPrice}
-                    onValueChange={(n) => setCostPrice(n)} emptyWhenZero
-                    className="w-full border border-slate-300 rounded-xl p-2 font-bold text-slate-800"
-                  />
+              <fieldset className="border border-slate-200 rounded-xl p-3 space-y-2">
+                <legend className="px-1 font-bold text-slate-700">Custo por unidade</legend>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <label htmlFor="prod-base-cost" className="text-slate-600 block mb-1">
+                      Produto (R$) *
+                    </label>
+                    <NumberField
+                      id="prod-base-cost"
+                      min="0"
+                      required
+                      value={baseCost}
+                      onValueChange={(n) => setBaseCost(n)} emptyWhenZero
+                      placeholder="Ex.: 88,91"
+                      className="w-full border border-slate-300 rounded-xl p-2 font-semibold text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="prod-freight-cost" className="text-slate-600 block mb-1">
+                      Frete (R$)
+                    </label>
+                    <NumberField
+                      id="prod-freight-cost"
+                      min="0"
+                      value={freightCost}
+                      onValueChange={(n) => setFreightCost(n)} emptyWhenZero
+                      placeholder="0,00"
+                      className="w-full border border-slate-300 rounded-xl p-2 font-semibold text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="prod-tax-cost" className="text-slate-600 block mb-1">
+                      Impostos (R$)
+                    </label>
+                    <NumberField
+                      id="prod-tax-cost"
+                      min="0"
+                      value={taxCost}
+                      onValueChange={(n) => setTaxCost(n)} emptyWhenZero
+                      placeholder="0,00"
+                      className="w-full border border-slate-300 rounded-xl p-2 font-semibold text-slate-800"
+                    />
+                  </div>
                 </div>
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                  <span className="text-slate-600">Custo total</span>
+                  <span className="font-bold text-slate-900 tabular-nums" aria-live="polite">
+                    {formatCurrency(totalCost)}
+                  </span>
+                </div>
+              </fieldset>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">
+                  <label htmlFor="prod-sell-price" className="font-bold text-slate-700 block mb-1">
                     Preço de Venda (R$) *
                   </label>
                   <NumberField
+                    id="prod-sell-price"
                     min="0"
                     required
                     value={sellPrice}
                     onValueChange={(n) => setSellPrice(n)} emptyWhenZero
                     className="w-full border border-slate-300 rounded-xl p-2 font-black text-emerald-700"
                   />
+                </div>
+                <div
+                  className={`rounded-xl border p-2 ${
+                    previewProfit < 0 ? 'bg-red-50 border-red-200' : 'bg-emerald-50 border-emerald-200'
+                  }`}
+                >
+                  <span className="text-[11px] text-slate-600 block">Lucro por unidade</span>
+                  <span
+                    className={`font-bold tabular-nums ${previewProfit < 0 ? 'text-red-700' : 'text-emerald-800'}`}
+                  >
+                    {formatCurrency(previewProfit)}
+                    {Number(sellPrice) > 0 && (
+                      <span className="text-xs font-semibold ml-1">({previewMargin.toFixed(1).replace('.', ',')}%)</span>
+                    )}
+                  </span>
                 </div>
               </div>
 

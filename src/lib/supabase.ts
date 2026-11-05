@@ -1124,6 +1124,19 @@ REVOKE ALL ON FUNCTION public.erp_apply_cash_delta(TEXT, TEXT, NUMERIC) FROM PUB
 GRANT EXECUTE ON FUNCTION public.erp_current_user_name() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.erp_apply_stock_delta(TEXT, TEXT, NUMERIC, NUMERIC) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.erp_apply_cash_delta(TEXT, TEXT, NUMERIC) TO authenticated;
+
+-- ==============================================================================
+-- 28. COMPOSIÇÃO DO CUSTO DO PRODUTO (produto + frete + impostos)
+-- cost_price continua sendo o custo total usado no cálculo de lucro.
+-- ==============================================================================
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS base_cost NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS freight_cost NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS tax_cost NUMERIC NOT NULL DEFAULT 0;
+
+-- Produtos já cadastrados: o custo atual passa a ser o "custo do produto"
+UPDATE public.products
+   SET base_cost = cost_price
+ WHERE base_cost = 0 AND freight_cost = 0 AND tax_cost = 0 AND cost_price > 0;
 `;
 
 // Helper conversion functions
@@ -1133,6 +1146,9 @@ export function mapDbProduct(row: any): Product {
     code: row.code || '',
     name: row.name,
     costPrice: Number(row.cost_price) || 0,
+    baseCost: row.base_cost != null ? Number(row.base_cost) : undefined,
+    freightCost: row.freight_cost != null ? Number(row.freight_cost) : undefined,
+    taxCost: row.tax_cost != null ? Number(row.tax_cost) : undefined,
     sellPrice: Number(row.sell_price) || 0,
     category: row.category || undefined,
     minStock: row.min_stock !== null ? Number(row.min_stock) : undefined,
@@ -1149,6 +1165,9 @@ export function mapProductToDb(p: Product): any {
     code: p.code || '',
     name: p.name,
     cost_price: p.costPrice,
+    base_cost: p.baseCost ?? p.costPrice,
+    freight_cost: p.freightCost ?? 0,
+    tax_cost: p.taxCost ?? 0,
     sell_price: p.sellPrice,
     category: p.category || null,
     min_stock: p.minStock || 0,

@@ -63,7 +63,14 @@ export interface Product {
   id: string;
   code: string; // Auto-gerado (ex: GLP-0001)
   name: string;
+  /** Custo total por unidade = produto + frete + impostos (usado no cálculo de lucro). */
   costPrice: number;
+  /** Custo do produto em si (ex.: o gás pago à distribuidora). */
+  baseCost?: number;
+  /** Frete por unidade. */
+  freightCost?: number;
+  /** Impostos por unidade. */
+  taxCost?: number;
   sellPrice: number;
   category?: string;
   minStock?: number;
