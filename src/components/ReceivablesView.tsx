@@ -13,6 +13,7 @@ import {
   ArrowDownLeft,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { NumberField } from './NumberField';
 import { Receivable, PaymentMethod } from '../types';
 import { formatCurrency, formatDate } from '../utils/formatters';
 
@@ -266,14 +267,12 @@ export const ReceivablesView: React.FC = () => {
                   <span className="absolute left-3 top-2.5 text-slate-400 font-bold">
                     R$
                   </span>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumberField
                     min="0.01"
                     max={selectedReceivable.remainingAmount}
                     required
-                    value={payAmount || ''}
-                    onChange={(e) => setPayAmount(parseFloat(e.target.value) || 0)}
+                    value={payAmount}
+                    onValueChange={(n) => setPayAmount(n)} emptyWhenZero
                     className="w-full pl-9 text-base font-black text-slate-900 border border-slate-300 rounded-xl p-2 focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>

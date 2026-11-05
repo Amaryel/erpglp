@@ -17,6 +17,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { NumberField } from './NumberField';
 import { Expense, PaymentMethod } from '../types';
 import { formatCurrency, formatDate, formatPaymentMethod } from '../utils/formatters';
 
@@ -459,13 +460,11 @@ export const ExpensesView: React.FC = () => {
 
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">Valor (R$) *</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumberField
                     min="0.01"
                     required
-                    value={amount || ''}
-                    onChange={(e) => setAmount(parseFloat(e.target.value) || 0)}
+                    value={amount}
+                    onValueChange={(n) => setAmount(n)} emptyWhenZero
                     className="w-full border border-slate-300 rounded-xl p-2.5 font-black text-rose-700 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500"
                   />
                 </div>

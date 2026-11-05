@@ -4,11 +4,32 @@
  * - Arquivos versionados (/assets) e ícones: usa a cópia salva.
  * - Dados do banco (Supabase) nunca passam por aqui: são sempre buscados ao vivo.
  */
-const CACHE = 'erpglp-v1';
-const SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const CACHE = 'erpglp-v2';
+const SHELL = [
+  '/',
+  '/manifest.webmanifest',
+  '/favicon.svg',
+  '/icons/icon.svg',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/favicon-32.png',
+];
+
+// Guarda a página e os arquivos (JS/CSS) que ela usa, para abrir sem internet
+async function cacheAppShell() {
+  const cache = await caches.open(CACHE);
+  await cache.addAll(SHELL);
+  try {
+    const html = await (await fetch('/', { cache: 'no-store' })).text();
+    const assets = [...new Set(html.match(/\/assets\/[^"' )]+/g) || [])];
+    await cache.addAll(assets);
+  } catch (err) {
+    console.warn('Não foi possível guardar os arquivos para uso offline:', err);
+  }
+}
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(cacheAppShell().then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
@@ -31,16 +52,25 @@ self.addEventListener('fetch', (event) => {
         .then((res) => {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put('/', copy));
+          // Nova versão publicada: guarda também os arquivos novos
+          res
+            .clone()
+            .text()
+            .then((html) => {
+              const assets = [...new Set(html.match(/\/assets\/[^"' )]+/g) || [])];
+              return caches.open(CACHE).then((c) => c.addAll(assets));
+            })
+            .catch(() => {});
           return res;
         })
-        .catch(() => caches.match('/'))
+        .catch(() => caches.match('/', { ignoreVary: true, ignoreSearch: true }))
     );
     return;
   }
 
   if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/')) {
     event.respondWith(
-      caches.match(req).then(
+      caches.match(req, { ignoreVary: true, ignoreSearch: true }).then(
         (hit) =>
           hit ||
           fetch(req).then((res) => {

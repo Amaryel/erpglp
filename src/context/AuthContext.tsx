@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { AppUser, UserRole } from '../types';
 import { getSupabaseClient, mapDbUser, normalizeUsername, usernameToLoginEmail } from '../lib/supabase';
+import { hasPendingSync, getSyncStatus } from '../lib/offlineSync';
 
 type ActionResult = { success: boolean; error?: string };
 
@@ -57,6 +58,52 @@ function clearLegacyAuthStorage() {
   }
 }
 
+// ---------- acesso offline ----------
+// Guarda o perfil do último login neste aparelho para abrir o sistema sem internet.
+const PROFILE_CACHE_KEY = 'erpglp_profile_cache_v1';
+
+function storedAuthUserId(): string | null {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i) || '';
+      if (/^sb-.*-auth-token$/.test(key)) {
+        const parsed = JSON.parse(localStorage.getItem(key) || 'null');
+        return parsed?.user?.id || null;
+      }
+    }
+  } catch {
+    /* armazenamento indisponível */
+  }
+  return null;
+}
+
+function saveProfileCache(authUserId: string, profile: AppUser) {
+  try {
+    localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({ authUserId, profile, savedAt: new Date().toISOString() }));
+  } catch {
+    /* ignore */
+  }
+}
+
+function readProfileCache(): { authUserId: string; profile: AppUser } | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PROFILE_CACHE_KEY) || 'null');
+    return parsed?.authUserId && parsed?.profile ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearProfileCache() {
+  try {
+    localStorage.removeItem(PROFILE_CACHE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+const isNetworkFailure = (msg?: string) => /failed to fetch|network|load failed|fetch/i.test(msg || '');
+
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -78,9 +125,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!supabase) return { success: false, error: NO_DB_ERROR };
 
     const { data, error } = await supabase.rpc('erp_me');
-    if (error && /failed to fetch|network|load failed/i.test(error.message || '')) {
+    if ((error && isNetworkFailure(error.message)) || (error && !navigator.onLine)) {
       // Queda de internet não deve derrubar quem já está trabalhando
-      return { success: Boolean(currentUserRef.current), error: friendlyError(error, '') };
+      if (currentUserRef.current) return { success: true };
+      // Sem internet ao abrir: usa o último perfil que entrou neste aparelho
+      const cache = readProfileCache();
+      if (cache && cache.authUserId === storedAuthUserId() && cache.profile.status === 'ativo') {
+        setCurrentUser(cache.profile);
+        return { success: true };
+      }
+      return {
+        success: false,
+        error: 'Sem internet. O primeiro acesso neste aparelho precisa de conexão.',
+      };
     }
     if (error) {
       await supabase.auth.signOut({ scope: 'local' });
@@ -101,6 +158,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     setCurrentUser(profile);
+    if (data.auth_user_id) saveProfileCache(data.auth_user_id, profile);
     return { success: true };
   }, [clearSessionState]);
 
@@ -145,16 +203,31 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     let active = true;
 
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (data.session) {
+    // Offline, a renovação do token pode demorar: não deixa a tela de carregamento esperar
+    const sessionCheck: Promise<{ data: { session: unknown } }> = navigator.onLine
+      ? Promise.race([
+          supabase.auth.getSession() as Promise<{ data: { session: unknown } }>,
+          new Promise<{ data: { session: unknown } }>((resolve) =>
+            setTimeout(() => resolve({ data: { session: null } }), 6000)
+          ),
+        ])
+      : Promise.resolve({ data: { session: null } });
+
+    sessionCheck.then(async ({ data }) => {
+      // Sem internet a sessão salva não consegue ser renovada; ainda assim o aparelho
+      // continua conectado à conta (o perfil vem do cache em loadProfile).
+      if (data.session || storedAuthUserId()) {
         const res = await loadProfile();
         if (!res.success && active) setSessionMessage(res.error || null);
       }
       if (active) setIsLoading(false);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT' || !session) {
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      // Só encerra quando a conta realmente saiu (logout ou acesso revogado no servidor).
+      // Falha de renovação por falta de internet não derruba quem está trabalhando offline.
+      if (event === 'SIGNED_OUT') {
+        clearProfileCache();
         clearSessionState();
       }
     });
@@ -225,7 +298,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const logout = async () => {
+    const pending = getSyncStatus().pending;
+    if (
+      hasPendingSync() &&
+      !window.confirm(
+        `Há ${pending} lançamento(s) deste aparelho ainda não enviados para a nuvem.\n\n` +
+          'Se sair agora, eles continuam guardados aqui e serão enviados quando você entrar de novo com internet.\n\nSair mesmo assim?'
+      )
+    ) {
+      return;
+    }
     const supabase = getSupabaseClient();
+    clearProfileCache();
     clearSessionState();
     try {
       sessionStorage.clear();

@@ -17,6 +17,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { NumberField } from './NumberField';
 import { PaymentMethod, PaymentSplit, SaleType } from '../types';
 import { PaymentSplitEditor } from './PaymentSplitEditor';
 import { summarizePayments, normalizePayments } from '../lib/payments';
@@ -618,13 +619,9 @@ export const NewSaleModal: React.FC<NewSaleModalProps> = ({
                         )}
                         <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5">
                           <span>Preço un:</span>
-                          <input
-                            type="number"
-                            step="0.5"
+                          <NumberField
                             value={item.unitPrice}
-                            onChange={(e) =>
-                              handleUpdatePrice(item.productId, Number(e.target.value))
-                            }
+                            onValueChange={(n) => handleUpdatePrice(item.productId, n)}
                             className="w-18 bg-white border border-slate-300 rounded px-1.5 py-0.5 text-xs font-semibold text-slate-800"
                           />
                         </div>

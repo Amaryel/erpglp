@@ -27,6 +27,7 @@ import {
 import { useErp } from '../context/ErpContext';
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency } from '../utils/formatters';
+import { SyncStatusBadge } from './SyncStatusBadge';
 
 export type ActiveTab =
   | 'dashboard'
@@ -260,6 +261,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </button>
 
+            <SyncStatusBadge />
+
             {isSuperadmin ? (
               <button
                 id="header-supabase-btn"
@@ -273,17 +276,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <span className={`absolute -bottom-0.5 -right-1 w-2 h-2 rounded-full ring-2 ring-white ${dbDotClass}`} />
                 </span>
               </button>
-            ) : (
-              <span
-                title={isOnlineDb ? 'Banco de dados conectado' : 'Sem conexão com o banco'}
-                className="w-9 h-9 flex items-center justify-center text-slate-400"
-              >
-                <span className="relative flex">
-                  <Database className="w-4 h-4" />
-                  <span className={`absolute -bottom-0.5 -right-1 w-2 h-2 rounded-full ring-2 ring-white ${dbDotClass}`} />
-                </span>
-              </span>
-            )}
+            ) : null}
 
             <button
               id="header-new-sale-btn"

@@ -14,6 +14,7 @@ import {
   Filter,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { NumberField } from './NumberField';
 import { formatDateTime } from '../utils/formatters';
 
 type StockTab = 'atual' | 'movimentacoes' | 'ajustar' | 'conferencia';
@@ -412,12 +413,11 @@ export const StockView: React.FC = () => {
                         Cheios (Anterior: {currentAdjustStock.fullQuantity})
                       </label>
                       <div className="flex items-center gap-2">
-                        <input
-                          type="number"
+                        <NumberField
                           min="0"
                           required
                           value={adjustNewFull}
-                          onChange={(e) => setAdjustNewFull(parseInt(e.target.value) || 0)}
+                          onValueChange={(n) => setAdjustNewFull(n)} decimal={false}
                           className="w-full text-base font-black text-slate-900 bg-white border border-slate-300 rounded-xl p-2"
                         />
                       </div>
@@ -441,12 +441,11 @@ export const StockView: React.FC = () => {
                         <label className="text-[11px] text-slate-600 block mb-1 font-semibold">
                           Vazios (Anterior: {currentAdjustStock.emptyQuantity})
                         </label>
-                        <input
-                          type="number"
+                        <NumberField
                           min="0"
                           required
                           value={adjustNewEmpty}
-                          onChange={(e) => setAdjustNewEmpty(parseInt(e.target.value) || 0)}
+                          onValueChange={(n) => setAdjustNewEmpty(n)} decimal={false}
                           className="w-full text-base font-black text-slate-900 bg-white border border-slate-300 rounded-xl p-2"
                         />
                         <span className="text-[10px] text-slate-500">
@@ -595,13 +594,10 @@ export const StockView: React.FC = () => {
                     <label className="font-bold text-slate-800 block text-[11px]">
                       Contagem Física:
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       min="0"
                       value={confPhysicalFull}
-                      onChange={(e) =>
-                        setConfPhysicalFull(parseInt(e.target.value) || 0)
-                      }
+                      onValueChange={(n) => setConfPhysicalFull(n)} decimal={false}
                       className="w-full text-lg font-black text-slate-900 bg-white border border-slate-300 rounded-xl p-2"
                     />
                   </div>
@@ -618,13 +614,10 @@ export const StockView: React.FC = () => {
                       <label className="font-bold text-slate-800 block text-[11px]">
                         Contagem Física:
                       </label>
-                      <input
-                        type="number"
+                      <NumberField
                         min="0"
                         value={confPhysicalEmpty}
-                        onChange={(e) =>
-                          setConfPhysicalEmpty(parseInt(e.target.value) || 0)
-                        }
+                        onValueChange={(n) => setConfPhysicalEmpty(n)} decimal={false}
                         className="w-full text-lg font-black text-slate-900 bg-white border border-slate-300 rounded-xl p-2"
                       />
                     </div>

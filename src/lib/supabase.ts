@@ -982,6 +982,148 @@ END $$;
 -- 25. DADOS INICIAIS
 -- ==============================================================================
 INSERT INTO public.app_settings (id) VALUES ('default') ON CONFLICT (id) DO NOTHING;
+
+-- ==============================================================================
+-- 26. QUEM LANÇOU / FINALIZOU / CANCELOU (preenchido pelo servidor, não dá para falsificar)
+-- ==============================================================================
+ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS created_by UUID;
+ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS created_by_name TEXT;
+ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS finalized_by UUID;
+ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS finalized_by_name TEXT;
+ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS canceled_by_name TEXT;
+ALTER TABLE public.audit_logs ADD COLUMN IF NOT EXISTS user_name TEXT;
+
+CREATE OR REPLACE FUNCTION public.erp_current_user_name()
+RETURNS TEXT
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+AS $$ SELECT u.name FROM public.users u WHERE u.auth_user_id = auth.uid() LIMIT 1 $$;
+
+CREATE OR REPLACE FUNCTION public.erp_sales_stamp_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+DECLARE
+  v_uid UUID := auth.uid();
+  v_name TEXT := public.erp_current_user_name();
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF v_uid IS NOT NULL THEN
+      NEW.created_by := v_uid;
+      NEW.created_by_name := COALESCE(v_name, NEW.created_by_name);
+      IF NEW.status = 'finalizada' THEN
+        NEW.finalized_by := v_uid;
+        NEW.finalized_by_name := COALESCE(v_name, NEW.finalized_by_name);
+      END IF;
+      IF NEW.status = 'cancelada' THEN
+        NEW.canceled_by_name := COALESCE(v_name, NEW.canceled_by_name);
+      END IF;
+    END IF;
+  ELSE
+    -- Quem lançou nunca muda
+    NEW.created_by := OLD.created_by;
+    NEW.created_by_name := COALESCE(OLD.created_by_name, NEW.created_by_name);
+
+    IF NEW.status = 'finalizada' AND OLD.status IS DISTINCT FROM 'finalizada' AND v_uid IS NOT NULL THEN
+      NEW.finalized_by := v_uid;
+      NEW.finalized_by_name := COALESCE(v_name, NEW.finalized_by_name);
+    ELSIF OLD.finalized_by_name IS NOT NULL THEN
+      NEW.finalized_by := OLD.finalized_by;
+      NEW.finalized_by_name := OLD.finalized_by_name;
+    END IF;
+
+    IF NEW.status = 'cancelada' AND OLD.status IS DISTINCT FROM 'cancelada' AND v_uid IS NOT NULL THEN
+      NEW.canceled_by_name := COALESCE(v_name, NEW.canceled_by_name);
+    ELSIF OLD.canceled_by_name IS NOT NULL THEN
+      NEW.canceled_by_name := OLD.canceled_by_name;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS erp_sales_stamp_user ON public.sales;
+CREATE TRIGGER erp_sales_stamp_user
+  BEFORE INSERT OR UPDATE ON public.sales
+  FOR EACH ROW EXECUTE FUNCTION public.erp_sales_stamp_user();
+
+CREATE OR REPLACE FUNCTION public.erp_audit_stamp_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+BEGIN
+  IF auth.uid() IS NOT NULL THEN
+    NEW.created_by := auth.uid();
+    NEW.user_name := COALESCE(public.erp_current_user_name(), NEW.user_name);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS erp_audit_stamp_user ON public.audit_logs;
+CREATE TRIGGER erp_audit_stamp_user
+  BEFORE INSERT ON public.audit_logs
+  FOR EACH ROW EXECUTE FUNCTION public.erp_audit_stamp_user();
+
+-- ==============================================================================
+-- 27. MODO OFFLINE: estoque e caixa por diferença, sem duplicar ao reenviar
+-- Cada lançamento feito sem internet é enviado depois com um código único;
+-- se o envio se repetir, o servidor ignora a cópia.
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.erp_applied_ops (
+  op_id TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.erp_applied_ops ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.erp_applied_ops FROM anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.erp_apply_stock_delta(
+  p_op_id TEXT, p_product_id TEXT, p_full NUMERIC, p_empty NUMERIC
+)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+BEGIN
+  IF NOT public.erp_is_active() THEN
+    RAISE EXCEPTION 'Acesso negado.' USING ERRCODE = '42501';
+  END IF;
+  INSERT INTO public.erp_applied_ops (op_id) VALUES (p_op_id) ON CONFLICT (op_id) DO NOTHING;
+  IF NOT FOUND THEN
+    RETURN; -- já aplicado
+  END IF;
+
+  INSERT INTO public.stock (product_id, full_quantity, empty_quantity, last_updated)
+  VALUES (p_product_id, GREATEST(0, COALESCE(p_full, 0)), GREATEST(0, COALESCE(p_empty, 0)), now())
+  ON CONFLICT (product_id) DO UPDATE
+    SET full_quantity = GREATEST(0, public.stock.full_quantity + COALESCE(p_full, 0)),
+        empty_quantity = GREATEST(0, public.stock.empty_quantity + COALESCE(p_empty, 0)),
+        last_updated = now();
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.erp_apply_cash_delta(p_op_id TEXT, p_register_id TEXT, p_delta NUMERIC)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+BEGIN
+  IF NOT public.erp_is_active() THEN
+    RAISE EXCEPTION 'Acesso negado.' USING ERRCODE = '42501';
+  END IF;
+  INSERT INTO public.erp_applied_ops (op_id) VALUES (p_op_id) ON CONFLICT (op_id) DO NOTHING;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+  UPDATE public.cash_registers
+     SET current_balance = current_balance + COALESCE(p_delta, 0), updated_at = now()
+   WHERE id = p_register_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.erp_current_user_name() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_apply_stock_delta(TEXT, TEXT, NUMERIC, NUMERIC) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.erp_apply_cash_delta(TEXT, TEXT, NUMERIC) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.erp_current_user_name() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_apply_stock_delta(TEXT, TEXT, NUMERIC, NUMERIC) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.erp_apply_cash_delta(TEXT, TEXT, NUMERIC) TO authenticated;
 `;
 
 // Helper conversion functions
@@ -1207,6 +1349,9 @@ export function mapDbSale(row: any): Sale {
     fiadoAmount: Number(row.fiado_amount) || 0,
     notes: row.notes || undefined,
     cancellationReason: row.cancellation_reason || undefined,
+    createdByName: row.created_by_name || undefined,
+    finalizedByName: row.finalized_by_name || undefined,
+    canceledByName: row.canceled_by_name || undefined,
   };
 }
 
@@ -1237,6 +1382,10 @@ export function mapSaleToDb(s: Sale): any {
     fiado_amount: s.fiadoAmount || 0,
     notes: s.notes || null,
     cancellation_reason: s.cancellationReason || null,
+    // O servidor confirma quem lançou/finalizou (gatilho erp_sales_stamp_user)
+    created_by_name: s.createdByName || null,
+    finalized_by_name: s.finalizedByName || null,
+    canceled_by_name: s.canceledByName || null,
     updated_at: new Date().toISOString(),
   };
 }
@@ -1414,6 +1563,7 @@ export function mapDbAuditLog(row: any): AuditLog {
     details: row.details || undefined,
     saleId: row.sale_id || undefined,
     productId: row.product_id || undefined,
+    userName: row.user_name || undefined,
   };
 }
 
@@ -1427,6 +1577,7 @@ export function mapAuditLogToDb(a: AuditLog): any {
     details: a.details || null,
     sale_id: a.saleId || null,
     product_id: a.productId || null,
+    user_name: a.userName || null,
   };
 }
 

@@ -11,6 +11,7 @@ import {
   Receipt,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { DailyRevenueChart, PaymentMixChart, TopProductsChart } from './DashboardCharts';
 import { useErp } from '../context/ErpContext';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { ActiveTab } from './Navbar';
@@ -22,10 +23,7 @@ interface DashboardViewProps {
 
 type DatePeriod = 'hoje' | 'ontem' | '7dias' | 'este_mes' | 'mes_anterior' | 'custom';
 
-export const DashboardView: React.FC<DashboardViewProps> = ({
-  setActiveTab,
-  onOpenNewSale,
-}) => {
+export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOpenNewSale }) => {
   const {
     products,
     stock,
@@ -57,16 +55,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const yesterdayStr = yesterday.toISOString().split('T')[0];
 
     const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000);
-    const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-      .toISOString()
-      .split('T')[0];
+    const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
 
-    const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      .toISOString()
-      .split('T')[0];
-    const lastDayLastMonth = new Date(now.getFullYear(), now.getMonth(), 0)
-      .toISOString()
-      .split('T')[0];
+    const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
+    const lastDayLastMonth = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
 
     return sales.filter((s) => {
       const sDate = s.createdAt.split('T')[0];
@@ -75,8 +67,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (period === 'ontem') return sDate === yesterdayStr;
       if (period === '7dias') return s.createdAt >= sevenDaysAgo.toISOString();
       if (period === 'este_mes') return sDate >= firstDayThisMonth;
-      if (period === 'mes_anterior')
-        return sDate >= firstDayLastMonth && sDate <= lastDayLastMonth;
+      if (period === 'mes_anterior') return sDate >= firstDayLastMonth && sDate <= lastDayLastMonth;
       if (period === 'custom') {
         if (customStart && sDate < customStart) return false;
         if (customEnd && sDate > customEnd) return false;
@@ -96,14 +87,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const fiadoSalesCount = finalizedSales.filter((s) => s.fiadoAmount > 0).length;
 
   // Deliveries in status breakdown
-  const pendingDeliveries = sales.filter(
-    (s) => s.type === 'delivery' && s.status === 'pendente'
-  ).length;
-  const onTheWayDeliveries = sales.filter(
-    (s) => s.type === 'delivery' && s.status === 'em_entrega'
-  ).length;
+  const pendingDeliveries = sales.filter((s) => s.type === 'delivery' && s.status === 'pendente').length;
+  const onTheWayDeliveries = sales.filter((s) => s.type === 'delivery' && s.status === 'em_entrega').length;
   const waitingFinalizeDeliveries = sales.filter(
-    (s) => s.type === 'delivery' && s.status === 'aguardando_finalizacao'
+    (s) => s.type === 'delivery' && s.status === 'aguardando_finalizacao',
   ).length;
 
   // Cash calculations today
@@ -112,16 +99,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     .filter(
       (m) =>
         m.timestamp.startsWith(todayStr) &&
-        (m.type === 'venda' || m.type === 'recebimento_fiado' || m.type === 'entrada' || m.type === 'suprimento')
+        (m.type === 'venda' || m.type === 'recebimento_fiado' || m.type === 'entrada' || m.type === 'suprimento'),
     )
     .reduce((sum, m) => sum + m.amount, 0);
 
   const todayCashExits = cashMovements
-    .filter(
-      (m) =>
-        m.timestamp.startsWith(todayStr) &&
-        (m.type === 'saida' || m.type === 'sangria')
-    )
+    .filter((m) => m.timestamp.startsWith(todayStr) && (m.type === 'saida' || m.type === 'sangria'))
     .reduce((sum, m) => sum + m.amount, 0);
 
   // Financial obligations
@@ -339,7 +322,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               } ${i === 2 ? 'lg:border-l' : ''} ${m.onClick ? 'cursor-pointer hover:bg-slate-50' : ''}`}
             >
               <dt className="text-sm text-slate-500">{m.label}</dt>
-              <dd className={`mt-1 text-xl sm:text-2xl font-semibold tracking-tight tabular-nums ${m.accent || 'text-slate-900'}`}>
+              <dd
+                className={`mt-1 text-xl sm:text-2xl font-semibold tracking-tight tabular-nums ${m.accent || 'text-slate-900'}`}
+              >
                 {m.value}
               </dd>
               <dd className="mt-0.5 text-xs text-slate-500">{m.sub}</dd>
@@ -347,6 +332,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           ))}
         </dl>
       </section>
+
+      {/* Gráficos de vendas */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        <div className="lg:col-span-3">
+          <DailyRevenueChart sales={sales} />
+        </div>
+        <div className="lg:col-span-2">
+          <PaymentMixChart sales={filteredSales} />
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Estoque de botijões */}
@@ -466,7 +461,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
                 <div>
                   <dt className="text-slate-500">Entradas hoje</dt>
-                  <dd className="font-medium text-emerald-700 tabular-nums mt-0.5">{formatCurrency(todayCashEntries)}</dd>
+                  <dd className="font-medium text-emerald-700 tabular-nums mt-0.5">
+                    {formatCurrency(todayCashEntries)}
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-slate-500">Saídas hoje</dt>
@@ -478,29 +475,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Contas */}
-      <section className={card}>
-        <div className="flex items-center justify-between px-4 sm:px-5 pt-4 pb-3">
-          <h2 className="text-base font-semibold text-slate-900">Contas a pagar</h2>
-          <button onClick={() => setActiveTab('pagar')} className={linkBtn}>
-            Ver contas <ArrowRight className="w-4 h-4" />
-          </button>
-        </div>
-        <dl className="grid grid-cols-2 border-t border-slate-100">
-          <div className="px-4 sm:px-5 py-4">
-            <dt className="text-sm text-slate-500">Vencidas</dt>
-            <dd
-              className={`mt-1 text-xl font-semibold tabular-nums ${overduePayables > 0 ? 'text-rose-600' : 'text-slate-900'}`}
-            >
-              {formatCurrency(overduePayables)}
-            </dd>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        <TopProductsChart sales={filteredSales} />
+
+        {/* Contas */}
+        <section className={card}>
+          <div className="flex items-center justify-between px-4 sm:px-5 pt-4 pb-3">
+            <h2 className="text-base font-semibold text-slate-900">Contas a pagar</h2>
+            <button onClick={() => setActiveTab('pagar')} className={linkBtn}>
+              Ver contas <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
-          <div className="px-4 sm:px-5 py-4 border-l border-slate-100">
-            <dt className="text-sm text-slate-500">Próximos 7 dias</dt>
-            <dd className="mt-1 text-xl font-semibold tabular-nums text-slate-900">{formatCurrency(upcomingPayables)}</dd>
-          </div>
-        </dl>
-      </section>
+          <dl className="grid grid-cols-2 border-t border-slate-100">
+            <div className="px-4 sm:px-5 py-4">
+              <dt className="text-sm text-slate-500">Vencidas</dt>
+              <dd
+                className={`mt-1 text-xl font-semibold tabular-nums ${overduePayables > 0 ? 'text-rose-600' : 'text-slate-900'}`}
+              >
+                {formatCurrency(overduePayables)}
+              </dd>
+            </div>
+            <div className="px-4 sm:px-5 py-4 border-l border-slate-100">
+              <dt className="text-sm text-slate-500">Próximos 7 dias</dt>
+              <dd className="mt-1 text-xl font-semibold tabular-nums text-slate-900">
+                {formatCurrency(upcomingPayables)}
+              </dd>
+            </div>
+          </dl>
+        </section>
+      </div>
     </div>
   );
 };

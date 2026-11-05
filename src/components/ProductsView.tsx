@@ -16,6 +16,7 @@ import {
   Info,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { NumberField } from './NumberField';
 import { Product, DeliveryPerson } from '../types';
 import { formatCurrency } from '../utils/formatters';
 
@@ -484,11 +485,10 @@ export const ProductsView: React.FC = () => {
                   <label className="font-bold text-slate-700 block mb-1">
                     Estoque Mínimo
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min="0"
                     value={minStock}
-                    onChange={(e) => setMinStock(parseInt(e.target.value) || 0)}
+                    onValueChange={(n) => setMinStock(n)} decimal={false}
                     className="w-full border border-slate-300 rounded-xl p-2"
                   />
                 </div>
@@ -499,13 +499,11 @@ export const ProductsView: React.FC = () => {
                   <label className="font-bold text-slate-700 block mb-1">
                     Preço de Custo (R$) *
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumberField
                     min="0"
                     required
-                    value={costPrice || ''}
-                    onChange={(e) => setCostPrice(parseFloat(e.target.value) || 0)}
+                    value={costPrice}
+                    onValueChange={(n) => setCostPrice(n)} emptyWhenZero
                     className="w-full border border-slate-300 rounded-xl p-2 font-bold text-slate-800"
                   />
                 </div>
@@ -514,13 +512,11 @@ export const ProductsView: React.FC = () => {
                   <label className="font-bold text-slate-700 block mb-1">
                     Preço de Venda (R$) *
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumberField
                     min="0"
                     required
-                    value={sellPrice || ''}
-                    onChange={(e) => setSellPrice(parseFloat(e.target.value) || 0)}
+                    value={sellPrice}
+                    onValueChange={(n) => setSellPrice(n)} emptyWhenZero
                     className="w-full border border-slate-300 rounded-xl p-2 font-black text-emerald-700"
                   />
                 </div>

@@ -12,6 +12,7 @@ import {
   Tag,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { NumberField } from './NumberField';
 import { Payable, PaymentMethod } from '../types';
 import { formatCurrency, formatDate } from '../utils/formatters';
 
@@ -352,13 +353,11 @@ export const PayablesView: React.FC = () => {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">Valor *</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumberField
                     min="0.01"
                     required
-                    value={amount || ''}
-                    onChange={(e) => setAmount(parseFloat(e.target.value) || 0)}
+                    value={amount}
+                    onValueChange={(n) => setAmount(n)} emptyWhenZero
                     placeholder="0,00"
                     className="w-full border border-slate-300 rounded-xl p-2 font-black"
                   />
@@ -440,12 +439,10 @@ export const PayablesView: React.FC = () => {
                 <label className="font-bold text-slate-800 block mb-1">
                   Valor Pago *
                 </label>
-                <input
-                  type="number"
-                  step="0.01"
+                <NumberField
                   required
                   value={payAmount}
-                  onChange={(e) => setPayAmount(parseFloat(e.target.value) || 0)}
+                  onValueChange={(n) => setPayAmount(n)}
                   className="w-full border border-slate-300 rounded-xl p-2 font-bold"
                 />
               </div>

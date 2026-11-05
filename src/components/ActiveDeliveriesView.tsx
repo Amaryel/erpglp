@@ -246,12 +246,20 @@ export const ActiveDeliveriesView: React.FC<ActiveDeliveriesViewProps> = ({
                     )}
                   </div>
 
-                  {/* Delivery Person tag */}
-                  <div className="flex items-center justify-between text-xs py-1.5 px-2 bg-slate-50 rounded-lg border border-slate-100 mb-2">
-                    <span className="text-slate-500 font-medium">Entregador:</span>
-                    <span className="font-bold text-slate-800">
-                      {sale.deliveryPersonName || 'Não atribuído'}
-                    </span>
+                  {/* Entregador e quem lançou */}
+                  <div className="text-xs py-1.5 px-2 bg-slate-50 rounded-lg border border-slate-100 mb-2 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500 font-medium">Entregador:</span>
+                      <span className="font-bold text-slate-800">{sale.deliveryPersonName || 'Não atribuído'}</span>
+                    </div>
+                    {sale.createdByName && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500 font-medium">Lançada por:</span>
+                        <span className="font-semibold text-slate-800">
+                          {sale.createdByName.replace(/\s*\(.*?\)/g, '')}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Items List */}

@@ -76,7 +76,7 @@ export const SalesHistoryView: React.FC = () => {
           const matchNumber = s.saleNumber.toLowerCase().includes(term);
           const matchClient = s.clientName?.toLowerCase().includes(term);
           const matchPhone = s.clientPhone?.toLowerCase().includes(term);
-          const matchAddress = s.deliveryAddress?.toLowerCase().includes(term);
+          const matchAddress = s.clientAddress?.toLowerCase().includes(term);
           const matchDriver = s.deliveryPersonName?.toLowerCase().includes(term);
           if (!matchNumber && !matchClient && !matchPhone && !matchAddress && !matchDriver) {
             return false;
@@ -94,8 +94,8 @@ export const SalesHistoryView: React.FC = () => {
     const totalRevenue = activeList.reduce((sum, s) => sum + s.totalAmount, 0);
     const totalGrossProfit = activeList.reduce((sum, s) => sum + s.grossProfit, 0);
     const totalCount = activeList.length;
-    const cylindersSent = activeList.reduce((sum, s) => sum + s.cylindersDispatched, 0);
-    const cylindersReturned = activeList.reduce((sum, s) => sum + s.cylindersReturned, 0);
+    const cylindersSent = activeList.reduce((sum, s) => sum + s.dispatchedCylinders, 0);
+    const cylindersReturned = activeList.reduce((sum, s) => sum + s.returnedCylinders, 0);
 
     return {
       totalRevenue,
@@ -292,7 +292,7 @@ export const SalesHistoryView: React.FC = () => {
         ) : (
           filteredSales.map((s) => {
             const hasCylinderDiff =
-              s.cylindersDispatched > 0 && s.cylindersDispatched !== s.cylindersReturned;
+              s.dispatchedCylinders > 0 && s.dispatchedCylinders !== s.returnedCylinders;
 
             return (
               <div
@@ -309,7 +309,7 @@ export const SalesHistoryView: React.FC = () => {
                     </span>
                     {getStatusBadge(s.status)}
                     <span className="text-[11px] font-semibold text-slate-600 flex items-center gap-1 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200">
-                      {s.type === 'entrega' ? (
+                      {s.type === 'delivery' ? (
                         <>
                           <Truck className="w-3 h-3 text-amber-500" />
                           Delivery
@@ -335,10 +335,10 @@ export const SalesHistoryView: React.FC = () => {
                     )}
                   </div>
 
-                  {s.type === 'entrega' && s.deliveryAddress && (
+                  {s.type === 'delivery' && s.clientAddress && (
                     <p className="text-[11px] text-slate-500 flex items-center gap-1">
                       <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
-                      {s.deliveryAddress}
+                      {s.clientAddress}
                       {s.deliveryPersonName ? ` • Entregador: ${s.deliveryPersonName}` : ''}
                     </p>
                   )}
@@ -347,13 +347,18 @@ export const SalesHistoryView: React.FC = () => {
                     <span>
                       Itens: <strong>{s.items.map((i) => `${i.quantity}x ${i.productName}`).join(', ')}</strong>
                     </span>
-                    {s.cylindersDispatched > 0 && (
+                    {s.dispatchedCylinders > 0 && (
                       <span
                         className={`font-semibold ${
                           hasCylinderDiff ? 'text-amber-700 font-bold' : 'text-slate-500'
                         }`}
                       >
-                        • Botijões: {s.cylindersDispatched} cheios / {s.cylindersReturned} vazios
+                        • Botijões: {s.dispatchedCylinders} cheios / {s.returnedCylinders} vazios
+                      </span>
+                    )}
+                    {s.createdByName && (
+                      <span className="text-slate-500">
+                        • Lançada por <strong className="text-slate-700">{s.createdByName.replace(/\s*\(.*?\)/g, '')}</strong>
                       </span>
                     )}
                   </div>
@@ -438,7 +443,7 @@ export const SalesHistoryView: React.FC = () => {
               <div className="flex justify-between items-center">
                 <span className="font-bold text-slate-700">Tipo de Atendimento:</span>
                 <span className="font-black text-slate-900 uppercase">
-                  {selectedSale.type === 'entrega' ? 'Delivery (Entrega em Domicílio)' : 'Venda Balcão / Portaria'}
+                  {selectedSale.type === 'delivery' ? 'Delivery (Entrega em Domicílio)' : 'Venda Balcão / Portaria'}
                 </span>
               </div>
               <div className="flex justify-between">
@@ -453,11 +458,11 @@ export const SalesHistoryView: React.FC = () => {
                   <span className="font-semibold text-slate-800">{selectedSale.clientPhone}</span>
                 </div>
               )}
-              {selectedSale.deliveryAddress && (
+              {selectedSale.clientAddress && (
                 <div className="flex justify-between">
                   <span className="text-slate-500">Endereço de Entrega:</span>
                   <span className="font-semibold text-slate-800 text-right">
-                    {selectedSale.deliveryAddress}
+                    {selectedSale.clientAddress}
                   </span>
                 </div>
               )}
@@ -469,6 +474,18 @@ export const SalesHistoryView: React.FC = () => {
                   </span>
                 </div>
               )}
+              {[
+                ['Lançada por', selectedSale.createdByName],
+                ['Finalizada por', selectedSale.finalizedByName],
+                ['Cancelada por', selectedSale.canceledByName],
+              ]
+                .filter(([, name]) => !!name)
+                .map(([label, name]) => (
+                  <div key={label} className="flex justify-between">
+                    <span className="text-slate-500">{label}:</span>
+                    <span className="font-semibold text-slate-800">{String(name).replace(/\s*\(.*?\)/g, '')}</span>
+                  </div>
+                ))}
             </div>
 
             {/* Items Table */}
@@ -512,10 +529,10 @@ export const SalesHistoryView: React.FC = () => {
             </div>
 
             {/* Vasilhames check */}
-            {selectedSale.cylindersDispatched > 0 && (
+            {selectedSale.dispatchedCylinders > 0 && (
               <div
                 className={`p-3 rounded-xl border text-xs ${
-                  selectedSale.cylindersDispatched === selectedSale.cylindersReturned
+                  selectedSale.dispatchedCylinders === selectedSale.returnedCylinders
                     ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                     : 'bg-amber-50 border-amber-200 text-amber-900'
                 }`}
@@ -525,12 +542,12 @@ export const SalesHistoryView: React.FC = () => {
                   Controle de Vasilhames desta Venda:
                 </p>
                 <div className="flex justify-between mt-1 text-[11px]">
-                  <span>Botijões Cheios Saídos: <strong>{selectedSale.cylindersDispatched}</strong></span>
-                  <span>Vazios Retornados: <strong>{selectedSale.cylindersReturned}</strong></span>
+                  <span>Botijões Cheios Saídos: <strong>{selectedSale.dispatchedCylinders}</strong></span>
+                  <span>Vazios Retornados: <strong>{selectedSale.returnedCylinders}</strong></span>
                 </div>
-                {selectedSale.cylindersDispatched !== selectedSale.cylindersReturned && (
+                {selectedSale.dispatchedCylinders !== selectedSale.returnedCylinders && (
                   <p className="text-[11px] font-bold mt-1 text-amber-800">
-                    Aviso: Divergência de {selectedSale.cylindersDispatched - selectedSale.cylindersReturned} vasilhame(s) pendente(s).
+                    Aviso: Divergência de {selectedSale.dispatchedCylinders - selectedSale.returnedCylinders} vasilhame(s) pendente(s).
                   </p>
                 )}
               </div>
@@ -701,8 +718,8 @@ export const SalesHistoryView: React.FC = () => {
               <div className="border-t border-dashed border-slate-300 pt-1">
                 <p className="font-bold">CLIENTE:</p>
                 <p>{printReceiptSale.clientName || 'Consumidor Final / Balcão'}</p>
-                {printReceiptSale.deliveryAddress && (
-                  <p className="text-[10px]">Entr: {printReceiptSale.deliveryAddress}</p>
+                {printReceiptSale.clientAddress && (
+                  <p className="text-[10px]">Entr: {printReceiptSale.clientAddress}</p>
                 )}
               </div>
 
@@ -731,10 +748,10 @@ export const SalesHistoryView: React.FC = () => {
                 ))}
               </div>
 
-              {printReceiptSale.cylindersDispatched > 0 && (
+              {printReceiptSale.dispatchedCylinders > 0 && (
                 <div className="border-t border-dashed border-slate-300 pt-1 text-[10px]">
-                  <p>Cheios entregues: {printReceiptSale.cylindersDispatched}</p>
-                  <p>Vazios recolhidos: {printReceiptSale.cylindersReturned}</p>
+                  <p>Cheios entregues: {printReceiptSale.dispatchedCylinders}</p>
+                  <p>Vazios recolhidos: {printReceiptSale.returnedCylinders}</p>
                 </div>
               )}
 

@@ -94,6 +94,13 @@ export const LoginView: React.FC = () => {
             <p className="text-[15px] text-slate-500">Use o usuário e a senha fornecidos pelo administrador.</p>
           </div>
 
+          {typeof navigator !== 'undefined' && !navigator.onLine && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-900">
+              Sem internet. Se você já entrou neste aparelho antes, o sistema abre sozinho quando você recarregar;
+              o primeiro acesso precisa de conexão.
+            </div>
+          )}
+
           {visibleError && (
             <div
               role="alert"

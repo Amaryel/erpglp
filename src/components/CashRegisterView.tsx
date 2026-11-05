@@ -16,6 +16,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { NumberField } from './NumberField';
 import { CashMovementType, PaymentMethod } from '../types';
 import { formatCurrency, formatDateTime } from '../utils/formatters';
 
@@ -348,12 +349,10 @@ export const CashRegisterView: React.FC = () => {
                   <span className="absolute left-3 top-2.5 text-slate-400 font-bold">
                     R$
                   </span>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumberField
                     required
                     value={initialBalance}
-                    onChange={(e) => setInitialBalance(parseFloat(e.target.value) || 0)}
+                    onValueChange={(n) => setInitialBalance(n)}
                     className="w-full pl-9 text-base font-black text-slate-900 border border-slate-300 rounded-xl p-2 focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
@@ -436,12 +435,10 @@ export const CashRegisterView: React.FC = () => {
                   <span className="absolute left-3 top-2.5 text-slate-400 font-bold">
                     R$
                   </span>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumberField
                     required
                     value={countedCash}
-                    onChange={(e) => setCountedCash(parseFloat(e.target.value) || 0)}
+                    onValueChange={(n) => setCountedCash(n)}
                     className="w-full pl-9 text-base font-black text-slate-900 border border-slate-300 rounded-xl p-2 focus:ring-2 focus:ring-rose-500"
                   />
                 </div>
@@ -543,13 +540,11 @@ export const CashRegisterView: React.FC = () => {
                   <span className="absolute left-3 top-2.5 text-slate-400 font-bold">
                     R$
                   </span>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumberField
                     min="0.01"
                     required
-                    value={movAmount || ''}
-                    onChange={(e) => setMovAmount(parseFloat(e.target.value) || 0)}
+                    value={movAmount}
+                    onValueChange={(n) => setMovAmount(n)} emptyWhenZero
                     placeholder="0,00"
                     className="w-full pl-9 text-base font-black text-slate-900 border border-slate-300 rounded-xl p-2"
                   />

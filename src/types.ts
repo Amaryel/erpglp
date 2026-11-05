@@ -186,6 +186,11 @@ export interface Sale {
   fiadoAmount: number;
   notes?: string;
   cancellationReason?: string;
+  /** Usuário que lançou a venda/entrega (confirmado pelo servidor). */
+  createdByName?: string;
+  /** Usuário que finalizou (balcão: o mesmo que lançou). */
+  finalizedByName?: string;
+  canceledByName?: string;
 }
 
 export interface ReceivablePayment {
@@ -295,6 +300,8 @@ export interface AuditLog {
   details: any;
   saleId?: string;
   productId?: string;
+  /** Usuário que gerou o registro (confirmado pelo servidor). */
+  userName?: string;
 }
 
 export interface StockConference {

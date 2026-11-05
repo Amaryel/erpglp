@@ -33,6 +33,7 @@ import {
   Boxes,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { NumberField } from './NumberField';
 import { useAuth } from '../context/AuthContext';
 import {
   getStoredSupabaseConfig,
@@ -804,12 +805,10 @@ export const ConfigView: React.FC = () => {
                   <label className="font-bold text-slate-700 block mb-1">
                     Taxa Entrega Padrão (R$)
                   </label>
-                  <input
-                    type="number"
-                    step="0.50"
+                  <NumberField
                     min="0"
                     value={deliveryFee}
-                    onChange={(e) => setDeliveryFee(parseFloat(e.target.value) || 0)}
+                    onValueChange={(n) => setDeliveryFee(n)}
                     className="w-full border border-slate-300 rounded-xl p-2.5 font-bold"
                   />
                 </div>
@@ -817,11 +816,10 @@ export const ConfigView: React.FC = () => {
                   <label className="font-bold text-slate-700 block mb-1">
                     Alerta Estoque Mínimo
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     min="1"
                     value={defaultMinStock}
-                    onChange={(e) => setDefaultMinStock(parseInt(e.target.value) || 0)}
+                    onValueChange={(n) => setDefaultMinStock(n)} decimal={false}
                     className="w-full border border-slate-300 rounded-xl p-2.5 font-bold"
                   />
                 </div>

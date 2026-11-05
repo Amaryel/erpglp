@@ -40,6 +40,8 @@ import {
 } from '../data/initialData';
 import { generateNextCode } from '../utils/formatters';
 import { normalizePayments, summarizePayments, describePayments, round2 } from '../lib/payments';
+import { getSyncDb, hasPendingSync, onSyncDrained, setNetworkOnline, flushQueue } from '../lib/offlineSync';
+import { useAuth } from './AuthContext';
 import {
   getSupabaseClient,
   getStoredSupabaseConfig,
@@ -222,6 +224,10 @@ const STORAGE_KEY = 'erpglp_database_v1';
 const ErpContext = createContext<ErpContextType | null>(null);
 
 export function ErpProvider({ children }: { children: ReactNode }) {
+  const { currentUser } = useAuth();
+  // Nome de quem está usando o aparelho (o servidor confirma ao gravar)
+  const actorName = currentUser?.name.replace(/\s*\(.*?\)/g, '').trim() || undefined;
+
   // Local state with localStorage fallback
   const [products, setProducts] = useState<Product[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_products`);
@@ -362,9 +368,16 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
   // Load all data from Supabase Online Database
   const reloadFromOnlineDb = useCallback(async () => {
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (!supabase) {
       setIsOnlineDb(false);
+      return;
+    }
+
+    // Com lançamentos ainda não enviados, os dados do aparelho são a versão mais nova:
+    // recarregar do servidor agora apagaria da tela o que foi feito offline.
+    if (hasPendingSync()) {
+      flushQueue();
       return;
     }
 
@@ -410,6 +423,23 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         supabase.from('cash_conferences').select('*').order('timestamp', { ascending: false }),
         supabase.from('app_settings').select('*').eq('id', 'default').single(),
       ]);
+
+      // Sem internet: mantém os dados salvos no aparelho
+      const results = [prodsRes, stockRes, clientsRes, salesRes, settingsRes];
+      const networkDown = results.every(
+        (r: any) => r.error && !r.error.code && /fetch|network|load failed/i.test(r.error.message || '')
+      );
+      if (networkDown) {
+        setNetworkOnline(false);
+        setDbSyncState('idle');
+        return;
+      }
+      setNetworkOnline(true);
+      // Um lançamento pode ter sido feito enquanto a carga acontecia
+      if (hasPendingSync()) {
+        setDbSyncState('idle');
+        return;
+      }
 
       // If products table exists and returned data
       if (prodsRes.data && prodsRes.data.length > 0) {
@@ -500,7 +530,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
   // Push local data to Supabase (Seeding / Initial Cloud Upload)
   const syncCurrentDataToSupabase = async (): Promise<{ success: boolean; error?: string }> => {
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (!supabase) {
       return { success: false, error: 'Supabase não configurado.' };
     }
@@ -589,11 +619,16 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
   // Setup initial load and real-time listeners
   useEffect(() => {
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (!supabase) return;
 
     // Initial fetch from cloud
     reloadFromOnlineDb();
+
+    // Quando a fila offline termina de subir, busca a versão consolidada do servidor
+    const offDrained = onSyncDrained(() => reloadFromOnlineDb());
+    const onOnline = () => reloadFromOnlineDb();
+    window.addEventListener('online', onOnline);
 
     // Setup Realtime subscription across public tables
     let debounceTimer: any = null;
@@ -609,6 +644,8 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
     return () => {
       clearTimeout(debounceTimer);
+      offDrained();
+      window.removeEventListener('online', onOnline);
       supabase.removeChannel(channel);
     };
   }, [reloadFromOnlineDb]);
@@ -628,10 +665,11 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       details,
       saleId: extra?.saleId,
       productId: extra?.productId,
+      userName: actorName,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('audit_logs').insert(mapAuditLogToDb(newLog)).then();
     }
@@ -642,7 +680,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const updated = { ...settings, ...newSettings };
     setSettings(updated);
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('app_settings').upsert(mapAppSettingsToDb(updated)).then();
     }
@@ -746,11 +784,19 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     if (updatedItems.length > 0) {
       setStock((prev) => ({ ...prev, ...working }));
       setStockMovements((prev) => [...movements, ...prev]);
-      const supabase = getSupabaseClient();
+      const supabase = getSyncDb();
       if (supabase) {
-        supabase.from('stock').upsert(updatedItems.map(mapStockToDb)).then(({ error }) => {
-          if (error) console.error('Erro ao gravar estoque:', error.message);
-        });
+        // Envia a DIFERENÇA por produto: funciona offline e com vários aparelhos ao mesmo tempo
+        const totals: Record<string, { full: number; empty: number }> = {};
+        for (const d of deltas) {
+          const t = (totals[d.productId] ||= { full: 0, empty: 0 });
+          t.full += d.full || 0;
+          t.empty += d.empty || 0;
+        }
+        for (const [productId, t] of Object.entries(totals)) {
+          if (t.full === 0 && t.empty === 0) continue;
+          supabase.queueRpc('erp_apply_stock_delta', { p_product_id: productId, p_full: t.full, p_empty: t.empty });
+        }
         if (movements.length > 0) {
           supabase.from('stock_movements').insert(movements.map(mapStockMovementToDb)).then();
         }
@@ -786,10 +832,13 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     setCashMovements((prev) => [...moves, ...prev]);
     setCashRegister(updatedRegister);
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('cash_movements').insert(moves.map(mapCashMovementToDb)).then();
-      supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+      supabase.queueRpc('erp_apply_cash_delta', {
+          p_register_id: updatedRegister.id,
+          p_delta: round2(updatedRegister.currentBalance - cashRegister.currentBalance),
+        });
     }
   };
 
@@ -818,7 +867,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       paymentHistory: [],
     };
     setReceivables((prev) => [newReceivable, ...prev]);
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('receivables').insert(mapReceivableToDb(newReceivable)).then();
     }
@@ -855,7 +904,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
     const client = clients.find((c) => c.id === clientId);
     const deliveryPerson = deliveryPersons.find((d) => d.id === deliveryPersonId);
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     // Itens com custo CONGELADO no momento da venda
     const saleItems: SaleItem[] = [];
@@ -958,6 +1007,8 @@ export function ErpProvider({ children }: { children: ReactNode }) {
         status: 'finalizada',
         createdAt: timestamp,
         finalizedAt: timestamp,
+        createdByName: actorName,
+        finalizedByName: actorName,
         clientId: client?.id,
         clientName: client?.name || 'Consumidor Padrão',
         clientPhone: client?.phone,
@@ -1010,6 +1061,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       type: 'delivery',
       status: 'pendente',
       createdAt: timestamp,
+      createdByName: actorName,
       clientId: client?.id,
       clientName: client ? client.name : 'Consumidor Padrão',
       clientPhone: client ? client.phone : deliveryPhone || undefined,
@@ -1058,7 +1110,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       prev.map((s) => (s.id === saleId ? { ...s, status: newStatus } : s))
     );
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('sales').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', saleId).then();
     }
@@ -1122,7 +1174,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     }
 
     const timestamp = new Date().toISOString();
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     // 1. Vazios devolvidos voltam ao estoque, por produto
     const returns = allocateReturns(sale.items, returnedByProduct, returnedByProduct ? undefined : returnedCylinders);
@@ -1167,6 +1219,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       ...sale,
       status: 'finalizada',
       finalizedAt: timestamp,
+      finalizedByName: actorName,
       items: finalItems,
       clientId: targetClientId || sale.clientId,
       clientName: linkedClient ? linkedClient.name : sale.clientName,
@@ -1204,7 +1257,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     if (sale.status === 'cancelada') return { success: false, error: 'Venda já cancelada.' };
 
     const timestamp = new Date().toISOString();
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     // Reverter estoque: o cheio volta; o vazio recebido na troca sai
     const legacyReturns =
@@ -1249,7 +1302,10 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
       if (supabase) {
         supabase.from('cash_movements').insert(reverseMoves.map(mapCashMovementToDb)).then();
-        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+        supabase.queueRpc('erp_apply_cash_delta', {
+          p_register_id: updatedRegister.id,
+          p_delta: round2(updatedRegister.currentBalance - cashRegister.currentBalance),
+        });
       }
     }
 
@@ -1268,10 +1324,16 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     }
 
     setSales((prev) =>
-      prev.map((s) => (s.id === saleId ? { ...s, status: 'cancelada', cancellationReason: reason } : s))
+      prev.map((s) =>
+        s.id === saleId ? { ...s, status: 'cancelada', cancellationReason: reason, canceledByName: actorName } : s
+      )
     );
     if (supabase) {
-      supabase.from('sales').update({ status: 'cancelada', cancellation_reason: reason, updated_at: timestamp }).eq('id', saleId).then();
+      supabase
+        .from('sales')
+        .update({ status: 'cancelada', cancellation_reason: reason, canceled_by_name: actorName || null, updated_at: timestamp })
+        .eq('id', saleId)
+        .then();
     }
 
     addAuditLog(
@@ -1309,7 +1371,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const diffFull = newFull - currentStock.fullQuantity;
     const diffEmpty = newEmpty - currentStock.emptyQuantity;
     const timestamp = new Date().toISOString();
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     const adjustment: StockAdjustment = {
       id: `adj-${Date.now()}`,
@@ -1420,7 +1482,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const diffFull = physicalFull - current.fullQuantity;
     const diffEmpty = physicalEmpty - current.emptyQuantity;
     const timestamp = new Date().toISOString();
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     const conf: StockConference = {
       id: `conf-${Date.now()}`,
@@ -1481,7 +1543,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const newPaidAmount = rec.paidAmount + amount;
     const newRemaining = Math.max(0, rec.totalAmount - newPaidAmount);
     const newStatus = newRemaining <= 0.01 ? 'pago' : 'parcial';
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     const updatedReceivable: AccountReceivable = {
       ...rec,
@@ -1526,7 +1588,10 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
       if (supabase) {
         supabase.from('cash_movements').insert(mapCashMovementToDb(cashMove)).then();
-        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+        supabase.queueRpc('erp_apply_cash_delta', {
+          p_register_id: updatedRegister.id,
+          p_delta: round2(updatedRegister.currentBalance - cashRegister.currentBalance),
+        });
       }
     }
 
@@ -1551,7 +1616,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     };
     setCashRegister(newRegister);
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('cash_registers').insert(mapCashRegisterToDb(newRegister)).then();
     }
@@ -1579,9 +1644,20 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     };
     setCashRegister(updated);
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
-      supabase.from('cash_registers').upsert(mapCashRegisterToDb(updated)).then();
+      supabase
+        .from('cash_registers')
+        .update({
+          status: 'fechado',
+          closed_at: updated.closedAt,
+          physical_counted: physicalCounted,
+          difference,
+          close_notes: notes || null,
+          updated_at: timestamp,
+        })
+        .eq('id', updated.id)
+        .then();
     }
 
     addAuditLog(
@@ -1608,7 +1684,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const timestamp = new Date().toISOString();
     const isOut = type === 'saida' || type === 'sangria';
     const moveAmount = Number(amount) || 0;
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     const move: CashMovement = {
       id: `cm-${Date.now()}-${type}`,
@@ -1631,7 +1707,10 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
     if (supabase) {
       supabase.from('cash_movements').insert(mapCashMovementToDb(move)).then();
-      supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+      supabase.queueRpc('erp_apply_cash_delta', {
+          p_register_id: updatedRegister.id,
+          p_delta: round2(updatedRegister.currentBalance - cashRegister.currentBalance),
+        });
     }
 
     addAuditLog(
@@ -1645,7 +1724,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const expected = cashRegister?.currentBalance || 0;
     const difference = physicalCounted - expected;
     const timestamp = new Date().toISOString();
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     const conf: CashConference = {
       id: `cconf-${Date.now()}`,
@@ -1679,7 +1758,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       date: timestamp,
     };
     setExpenses((prev) => [newExp, ...prev]);
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     if (supabase) {
       supabase.from('expenses').insert(mapExpenseToDb(newExp)).then();
@@ -1705,7 +1784,10 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
       if (supabase) {
         supabase.from('cash_movements').insert(mapCashMovementToDb(cashMove)).then();
-        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+        supabase.queueRpc('erp_apply_cash_delta', {
+          p_register_id: updatedRegister.id,
+          p_delta: round2(updatedRegister.currentBalance - cashRegister.currentBalance),
+        });
       }
     }
 
@@ -1725,7 +1807,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const newAmount = updates.amount !== undefined ? updates.amount : existing.amount;
     const newCashImpact = newPaidFromCash ? newAmount : 0;
     const cashDiff = newCashImpact - oldCashImpact;
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     if (cashDiff !== 0 && cashRegister && cashRegister.status === 'aberto') {
       const updatedRegister: CashRegister = {
@@ -1734,7 +1816,10 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       };
       setCashRegister(updatedRegister);
       if (supabase) {
-        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+        supabase.queueRpc('erp_apply_cash_delta', {
+          p_register_id: updatedRegister.id,
+          p_delta: round2(updatedRegister.currentBalance - cashRegister.currentBalance),
+        });
       }
     }
 
@@ -1754,7 +1839,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
   const deleteExpense = (id: string) => {
     const existing = expenses.find((e) => e.id === id);
     if (!existing) return;
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     if (existing.paidFromCash && cashRegister && cashRegister.status === 'aberto') {
       const updatedRegister: CashRegister = {
@@ -1765,7 +1850,10 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       setCashMovements((prev) => prev.filter((cm) => cm.relatedExpenseId !== id));
 
       if (supabase) {
-        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+        supabase.queueRpc('erp_apply_cash_delta', {
+          p_register_id: updatedRegister.id,
+          p_delta: round2(updatedRegister.currentBalance - cashRegister.currentBalance),
+        });
         supabase.from('cash_movements').delete().eq('related_expense_id', id).then();
       }
     }
@@ -1790,7 +1878,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     };
     setPayables((prev) => [newPayable, ...prev]);
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('payables').insert(mapPayableToDb(newPayable)).then();
     }
@@ -1807,7 +1895,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     if (!pay) return;
 
     const timestamp = new Date().toISOString();
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     const updatedPayable: AccountPayable = {
       ...pay,
@@ -1856,7 +1944,10 @@ export function ErpProvider({ children }: { children: ReactNode }) {
 
       if (supabase) {
         supabase.from('cash_movements').insert(mapCashMovementToDb(cashMove)).then();
-        supabase.from('cash_registers').upsert(mapCashRegisterToDb(updatedRegister)).then();
+        supabase.queueRpc('erp_apply_cash_delta', {
+          p_register_id: updatedRegister.id,
+          p_delta: round2(updatedRegister.currentBalance - cashRegister.currentBalance),
+        });
       }
     }
 
@@ -1881,7 +1972,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     if (!pay) return;
     setPayables((prev) => prev.filter((p) => p.id !== payableId));
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('payables').delete().eq('id', payableId).then();
     }
@@ -1915,7 +2006,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       [newProd.id]: initialStockItem,
     }));
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('products').insert(mapProductToDb(newProd)).then();
       supabase.from('stock').insert(mapStockToDb(initialStockItem)).then();
@@ -1935,7 +2026,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const updated: Product = { ...existing, ...updates };
     setProducts((prev) => prev.map((p) => (p.id === id ? updated : p)));
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('products').upsert(mapProductToDb(updated)).then();
     }
@@ -1955,7 +2046,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const hasStockMovements = stockMovements.some((m) => m.productId === productId);
     const hasStockAdjustments = stockAdjustments.some((a) => a.productId === productId);
     const hasConferences = stockConferences.some((c) => c.productId === productId);
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
 
     if (hasSalesHistory || hasStockMovements || hasStockAdjustments || hasConferences) {
       const deactivated: Product = { ...prod, isActive: false };
@@ -2010,7 +2101,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     };
     setClients((prev) => [newClient, ...prev]);
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('clients').insert(mapClientToDb(newClient)).then();
     }
@@ -2026,7 +2117,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const updated: Client = { ...existing, ...updates };
     setClients((prev) => prev.map((c) => (c.id === id ? updated : c)));
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('clients').upsert(mapClientToDb(updated)).then();
     }
@@ -2039,7 +2130,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     };
     setDeliveryPersons((prev) => [...prev, newDp]);
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('delivery_persons').insert(mapDeliveryPersonToDb(newDp)).then();
     }
@@ -2054,7 +2145,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const updated: DeliveryPerson = { ...existing, ...updates };
     setDeliveryPersons((prev) => prev.map((d) => (d.id === id ? updated : d)));
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('delivery_persons').upsert(mapDeliveryPersonToDb(updated)).then();
     }
@@ -2067,7 +2158,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     };
     setSuppliers((prev) => [...prev, newSup]);
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('suppliers').insert(mapSupplierToDb(newSup)).then();
     }
@@ -2082,7 +2173,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     const updated: Supplier = { ...existing, ...updates };
     setSuppliers((prev) => prev.map((s) => (s.id === id ? updated : s)));
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       supabase.from('suppliers').upsert(mapSupplierToDb(updated)).then();
     }
@@ -2107,7 +2198,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     setStockConferences([]);
     setCashConferences([]);
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       syncCurrentDataToSupabase();
     }
@@ -2157,7 +2248,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     });
     setStock(resetStock);
 
-    const supabase = getSupabaseClient();
+    const supabase = getSyncDb();
     if (supabase) {
       // Clear operational tables on Supabase
       supabase.from('sales').delete().neq('id', '0').then();
@@ -2236,7 +2327,7 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       setStockConferences(data.stockConferences || []);
       setCashConferences(data.cashConferences || []);
 
-      const supabase = getSupabaseClient();
+      const supabase = getSyncDb();
       if (supabase) {
         syncCurrentDataToSupabase();
       }

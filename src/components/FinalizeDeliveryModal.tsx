@@ -11,6 +11,7 @@ import {
   MapPin,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { NumberField } from './NumberField';
 import { Sale, PaymentSplit } from '../types';
 import { formatCurrency, formatTime, getElapsedTime } from '../utils/formatters';
 import { summarizePayments } from '../lib/payments';
@@ -173,13 +174,12 @@ const FinalizeDeliveryContent: React.FC<{ sale: Sale; onClose: () => void }> = (
                       >
                         <Minus className="w-4 h-4" />
                       </button>
-                      <input
-                        type="number"
+                      <NumberField
                         inputMode="numeric"
                         min="0"
                         aria-label={`Vazios devolvidos de ${item.productName}`}
                         value={value}
-                        onChange={(e) => changeReturned(item.productId, parseInt(e.target.value) || 0)}
+                        onValueChange={(n) => changeReturned(item.productId, n)} decimal={false}
                         className="w-14 h-10 text-center text-lg font-black text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500/40"
                       />
                       <button

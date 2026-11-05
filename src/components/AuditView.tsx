@@ -182,6 +182,9 @@ export const AuditView: React.FC = () => {
                       <span className="text-[11px] text-slate-400 flex items-center gap-1">
                         <Clock className="w-3 h-3" />
                         {formatDateTime(log.timestamp)}
+                        {log.userName && (
+                          <span className="text-slate-500">· {log.userName.replace(/\s*\(.*?\)/g, '')}</span>
+                        )}
                       </span>
                     </div>
 
