@@ -16,6 +16,7 @@ import { Sale, PaymentSplit } from '../types';
 import { formatCurrency, formatTime, getElapsedTime } from '../utils/formatters';
 import { summarizePayments } from '../lib/payments';
 import { PaymentSplitEditor } from './PaymentSplitEditor';
+import { CashClosedNotice } from './CashClosedNotice';
 
 interface FinalizeDeliveryModalProps {
   sale: Sale | null;
@@ -30,7 +31,7 @@ export const FinalizeDeliveryModal: React.FC<FinalizeDeliveryModalProps> = ({ sa
 };
 
 const FinalizeDeliveryContent: React.FC<{ sale: Sale; onClose: () => void }> = ({ sale, onClose }) => {
-  const { finalizeDelivery, clients } = useErp();
+  const { finalizeDelivery, clients, cashRegister } = useErp();
 
   const cylinderItems = sale.items.filter((i) => i.isCylinder);
 
@@ -53,6 +54,7 @@ const FinalizeDeliveryContent: React.FC<{ sale: Sale; onClose: () => void }> = (
   const totalReturned = cylinderItems.reduce((sum, i) => sum + (returnedByProduct[i.productId] ?? 0), 0);
   const missingCylinders = Math.max(0, sale.dispatchedCylinders - totalReturned);
   const needsClient = summary.fiado > 0 && !selectedClientId;
+  const needsOpenCash = summary.paid > 0 && cashRegister?.status !== 'aberto';
 
   const changeReturned = (productId: string, value: number) =>
     setReturnedByProduct((prev) => ({ ...prev, [productId]: Math.max(0, value) }));
@@ -109,6 +111,8 @@ const FinalizeDeliveryContent: React.FC<{ sale: Sale; onClose: () => void }> = (
         </div>
 
         <div className="p-4 overflow-y-auto flex-1 space-y-4 text-slate-800">
+          {needsOpenCash && <CashClosedNotice />}
+
           {/* Sale Summary Banner */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs">
             <div className="flex items-center justify-between">
@@ -285,7 +289,7 @@ const FinalizeDeliveryContent: React.FC<{ sale: Sale; onClose: () => void }> = (
             id="confirm-finalize-delivery-btn"
             type="button"
             onClick={handleSubmit}
-            disabled={!summary.isBalanced || needsClient}
+            disabled={!summary.isBalanced || needsClient || needsOpenCash}
             className="flex-1 py-3 px-5 rounded-xl font-bold text-sm text-white bg-emerald-600 hover:bg-emerald-700 shadow-md flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
           >
             <CheckCircle2 className="w-5 h-5" />

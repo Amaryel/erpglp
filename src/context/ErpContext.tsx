@@ -675,6 +675,21 @@ export function ErpProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Registra no histórico quando alguém entra no sistema (uma vez por sessão do aparelho)
+  useEffect(() => {
+    if (!currentUser) return;
+    const key = `erpglp_session_logged_${currentUser.id}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+    } catch {
+      /* navegador sem sessionStorage: registra mesmo assim */
+    }
+    const device = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) ? 'celular/tablet' : 'computador';
+    addAuditLog('Entrou no sistema', 'sistema', `Acesso pelo ${device}${navigator.onLine ? '' : ' (sem internet)'}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]);
+
   // 1. UPDATE SETTINGS
   const updateSettings = (newSettings: Partial<AppSettings>) => {
     const updated = { ...settings, ...newSettings };
@@ -959,6 +974,10 @@ export function ErpProvider({ children }: { children: ReactNode }) {
       if (summary.fiado > 0 && !client) {
         return { success: false, error: 'Para vender no fiado, selecione ou cadastre o cliente.' };
       }
+      // Sem caixa aberto o recebimento não teria onde entrar (ficaria fora do financeiro)
+      if (summary.paid > 0 && cashRegister?.status !== 'aberto') {
+        return { success: false, error: 'O caixa está fechado. Abra o caixa para registrar o recebimento no financeiro (ou lance no fiado).' };
+      }
 
       // 1. Estoque: sai o cheio, entra o vazio devolvido na troca
       const returns = allocateReturns(
@@ -1171,6 +1190,9 @@ export function ErpProvider({ children }: { children: ReactNode }) {
             ? `Faltam R$ ${summary.remaining.toFixed(2)} para fechar o pagamento.`
             : `O pagamento informado passa R$ ${(-summary.remaining).toFixed(2)} do total da venda.`,
       };
+    }
+    if (summary.paid > 0 && cashRegister?.status !== 'aberto') {
+      return { success: false, error: 'O caixa está fechado. Abra o caixa para registrar o recebimento no financeiro (ou lance no fiado).' };
     }
 
     const timestamp = new Date().toISOString();

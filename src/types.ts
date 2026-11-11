@@ -1,4 +1,4 @@
-export type UserRole = 'superadmin' | 'admin' | 'operador' | 'entregador';
+export type UserRole = 'superadmin' | 'admin' | 'operador' | 'entregador' | 'atendente';
 export type UserStatus = 'ativo' | 'bloqueado';
 
 export interface AppUser {

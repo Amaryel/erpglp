@@ -15,6 +15,7 @@ import { DailyRevenueChart, PaymentMixChart, TopProductsChart } from './Dashboar
 import { useErp } from '../context/ErpContext';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { ActiveTab } from './Navbar';
+import { canAccessTab, canSeeFinance } from '../lib/permissions';
 
 interface DashboardViewProps {
   setActiveTab: (tab: ActiveTab) => void;
@@ -133,6 +134,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
 
   const { currentUser } = useAuth();
   const firstName = currentUser?.name.replace(/\s*\(.*?\)/g, '').split(' ')[0] || '';
+  const role = currentUser?.role;
+  // Atendente de caixa não vê faturamento, lucro, custos nem contas
+  const finance = canSeeFinance(role);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
   const todayLabel = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -181,7 +185,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
       text: `${formatCurrency(overduePayables)} em contas a pagar vencidas`,
       tab: 'pagar' as ActiveTab,
     },
-  ].filter(Boolean) as { key: string; tone: 'rose' | 'amber'; icon: React.ElementType; text: string; tab: ActiveTab }[];
+  ]
+    .filter(Boolean)
+    .filter((a: any) => canAccessTab(role, a.tab)) as {
+    key: string;
+    tone: 'rose' | 'amber';
+    icon: React.ElementType;
+    text: string;
+    tab: ActiveTab;
+  }[];
 
   const card = 'bg-white rounded-xl border border-slate-200';
   const linkBtn =
@@ -248,100 +260,104 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
         </ul>
       )}
 
-      {/* Resumo de vendas */}
-      <section className={card}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 pt-4">
-          <h2 className="text-base font-semibold text-slate-900">Resumo de vendas</h2>
-          <div className="flex items-center gap-0.5 p-0.5 bg-slate-100 rounded-lg overflow-x-auto max-w-full">
-            {PERIODS.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setPeriod(item.id)}
-                className={`h-8 px-3 rounded-md text-sm whitespace-nowrap transition-colors ${
-                  period === item.id
-                    ? 'bg-white text-slate-900 font-medium shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {period === 'custom' && (
-          <div className="flex flex-wrap items-center gap-2 px-4 sm:px-5 pt-3">
-            <input
-              type="date"
-              value={customStart}
-              onChange={(e) => setCustomStart(e.target.value)}
-              aria-label="Data inicial"
-              className="h-9 text-sm border border-slate-300 rounded-lg px-2"
-            />
-            <span className="text-sm text-slate-400">até</span>
-            <input
-              type="date"
-              value={customEnd}
-              onChange={(e) => setCustomEnd(e.target.value)}
-              aria-label="Data final"
-              className="h-9 text-sm border border-slate-300 rounded-lg px-2"
-            />
-          </div>
-        )}
-
-        <dl className="grid grid-cols-2 lg:grid-cols-4 mt-4 border-t border-slate-100">
-          {[
-            {
-              label: 'Faturamento',
-              value: formatCurrency(totalRevenue),
-              sub: `${salesCount} venda${salesCount === 1 ? '' : 's'} finalizada${salesCount === 1 ? '' : 's'}`,
-            },
-            {
-              label: 'Lucro bruto',
-              value: formatCurrency(grossProfit),
-              sub: `Margem de ${profitMargin.toFixed(1).replace('.', ',')}%`,
-              accent: grossProfit > 0 ? 'text-emerald-700' : undefined,
-            },
-            {
-              label: 'Ticket médio',
-              value: formatCurrency(averageTicket),
-              sub: `Custo dos produtos ${formatCurrency(totalCost)}`,
-            },
-            {
-              label: 'Fiado em aberto',
-              value: formatCurrency(totalReceivables),
-              sub: overdueReceivables > 0 ? `${formatCurrency(overdueReceivables)} vencido` : 'Nada vencido',
-              onClick: () => setActiveTab('receber'),
-            },
-          ].map((m, i) => (
-            <div
-              key={m.label}
-              onClick={m.onClick}
-              className={`px-4 sm:px-5 py-4 ${i % 2 === 1 ? 'border-l border-slate-100' : ''} ${
-                i >= 2 ? 'border-t lg:border-t-0 border-slate-100' : ''
-              } ${i === 2 ? 'lg:border-l' : ''} ${m.onClick ? 'cursor-pointer hover:bg-slate-50' : ''}`}
-            >
-              <dt className="text-sm text-slate-500">{m.label}</dt>
-              <dd
-                className={`mt-1 text-xl sm:text-2xl font-semibold tracking-tight tabular-nums ${m.accent || 'text-slate-900'}`}
-              >
-                {m.value}
-              </dd>
-              <dd className="mt-0.5 text-xs text-slate-500">{m.sub}</dd>
+      {finance && (
+        <>
+          {/* Resumo de vendas */}
+          <section className={card}>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 pt-4">
+              <h2 className="text-base font-semibold text-slate-900">Resumo de vendas</h2>
+              <div className="flex items-center gap-0.5 p-0.5 bg-slate-100 rounded-lg overflow-x-auto max-w-full">
+                {PERIODS.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => setPeriod(item.id)}
+                    className={`h-8 px-3 rounded-md text-sm whitespace-nowrap transition-colors ${
+                      period === item.id
+                        ? 'bg-white text-slate-900 font-medium shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          ))}
-        </dl>
-      </section>
 
-      {/* Gráficos de vendas */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        <div className="lg:col-span-3">
-          <DailyRevenueChart sales={sales} />
-        </div>
-        <div className="lg:col-span-2">
-          <PaymentMixChart sales={filteredSales} />
-        </div>
-      </div>
+            {period === 'custom' && (
+              <div className="flex flex-wrap items-center gap-2 px-4 sm:px-5 pt-3">
+                <input
+                  type="date"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  aria-label="Data inicial"
+                  className="h-9 text-sm border border-slate-300 rounded-lg px-2"
+                />
+                <span className="text-sm text-slate-400">até</span>
+                <input
+                  type="date"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  aria-label="Data final"
+                  className="h-9 text-sm border border-slate-300 rounded-lg px-2"
+                />
+              </div>
+            )}
+
+            <dl className="grid grid-cols-2 lg:grid-cols-4 mt-4 border-t border-slate-100">
+              {[
+                {
+                  label: 'Faturamento',
+                  value: formatCurrency(totalRevenue),
+                  sub: `${salesCount} venda${salesCount === 1 ? '' : 's'} finalizada${salesCount === 1 ? '' : 's'}`,
+                },
+                {
+                  label: 'Lucro bruto',
+                  value: formatCurrency(grossProfit),
+                  sub: `Margem de ${profitMargin.toFixed(1).replace('.', ',')}%`,
+                  accent: grossProfit > 0 ? 'text-emerald-700' : undefined,
+                },
+                {
+                  label: 'Ticket médio',
+                  value: formatCurrency(averageTicket),
+                  sub: `Custo dos produtos ${formatCurrency(totalCost)}`,
+                },
+                {
+                  label: 'Fiado em aberto',
+                  value: formatCurrency(totalReceivables),
+                  sub: overdueReceivables > 0 ? `${formatCurrency(overdueReceivables)} vencido` : 'Nada vencido',
+                  onClick: () => setActiveTab('receber'),
+                },
+              ].map((m, i) => (
+                <div
+                  key={m.label}
+                  onClick={m.onClick}
+                  className={`px-4 sm:px-5 py-4 ${i % 2 === 1 ? 'border-l border-slate-100' : ''} ${
+                    i >= 2 ? 'border-t lg:border-t-0 border-slate-100' : ''
+                  } ${i === 2 ? 'lg:border-l' : ''} ${m.onClick ? 'cursor-pointer hover:bg-slate-50' : ''}`}
+                >
+                  <dt className="text-sm text-slate-500">{m.label}</dt>
+                  <dd
+                    className={`mt-1 text-xl sm:text-2xl font-semibold tracking-tight tabular-nums ${m.accent || 'text-slate-900'}`}
+                  >
+                    {m.value}
+                  </dd>
+                  <dd className="mt-0.5 text-xs text-slate-500">{m.sub}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          {/* Gráficos de vendas */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            <div className="lg:col-span-3">
+              <DailyRevenueChart sales={sales} />
+            </div>
+            <div className="lg:col-span-2">
+              <PaymentMixChart sales={filteredSales} />
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Estoque de botijões */}
@@ -353,9 +369,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
                 {totalFullCylinders} cheios · {totalEmptyCylinders} vazios
               </p>
             </div>
-            <button onClick={() => setActiveTab('estoque')} className={linkBtn}>
-              Ver estoque <ArrowRight className="w-4 h-4" />
-            </button>
+            {canAccessTab(role, 'estoque') && (
+              <button onClick={() => setActiveTab('estoque')} className={linkBtn}>
+                Ver estoque <ArrowRight className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
           {cylinderRows.length === 0 ? (
@@ -397,7 +415,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
               ))}
             </ul>
           )}
-          {otherProductsCount > 0 && (
+          {otherProductsCount > 0 && canAccessTab(role, 'produtos') && (
             <button
               onClick={() => setActiveTab('produtos')}
               className="w-full text-left px-4 sm:px-5 py-3 border-t border-slate-100 text-sm text-slate-500 hover:bg-slate-50 rounded-b-xl"
@@ -475,35 +493,37 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        <TopProductsChart sales={filteredSales} />
+      {finance && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          <TopProductsChart sales={filteredSales} />
 
-        {/* Contas */}
-        <section className={card}>
-          <div className="flex items-center justify-between px-4 sm:px-5 pt-4 pb-3">
-            <h2 className="text-base font-semibold text-slate-900">Contas a pagar</h2>
-            <button onClick={() => setActiveTab('pagar')} className={linkBtn}>
-              Ver contas <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-          <dl className="grid grid-cols-2 border-t border-slate-100">
-            <div className="px-4 sm:px-5 py-4">
-              <dt className="text-sm text-slate-500">Vencidas</dt>
-              <dd
-                className={`mt-1 text-xl font-semibold tabular-nums ${overduePayables > 0 ? 'text-rose-600' : 'text-slate-900'}`}
-              >
-                {formatCurrency(overduePayables)}
-              </dd>
+          {/* Contas */}
+          <section className={card}>
+            <div className="flex items-center justify-between px-4 sm:px-5 pt-4 pb-3">
+              <h2 className="text-base font-semibold text-slate-900">Contas a pagar</h2>
+              <button onClick={() => setActiveTab('pagar')} className={linkBtn}>
+                Ver contas <ArrowRight className="w-4 h-4" />
+              </button>
             </div>
-            <div className="px-4 sm:px-5 py-4 border-l border-slate-100">
-              <dt className="text-sm text-slate-500">Próximos 7 dias</dt>
-              <dd className="mt-1 text-xl font-semibold tabular-nums text-slate-900">
-                {formatCurrency(upcomingPayables)}
-              </dd>
-            </div>
-          </dl>
-        </section>
-      </div>
+            <dl className="grid grid-cols-2 border-t border-slate-100">
+              <div className="px-4 sm:px-5 py-4">
+                <dt className="text-sm text-slate-500">Vencidas</dt>
+                <dd
+                  className={`mt-1 text-xl font-semibold tabular-nums ${overduePayables > 0 ? 'text-rose-600' : 'text-slate-900'}`}
+                >
+                  {formatCurrency(overduePayables)}
+                </dd>
+              </div>
+              <div className="px-4 sm:px-5 py-4 border-l border-slate-100">
+                <dt className="text-sm text-slate-500">Próximos 7 dias</dt>
+                <dd className="mt-1 text-xl font-semibold tabular-nums text-slate-900">
+                  {formatCurrency(upcomingPayables)}
+                </dd>
+              </div>
+            </dl>
+          </section>
+        </div>
+      )}
     </div>
   );
 };

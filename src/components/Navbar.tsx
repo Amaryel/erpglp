@@ -28,6 +28,7 @@ import { useErp } from '../context/ErpContext';
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency } from '../utils/formatters';
 import { SyncStatusBadge } from './SyncStatusBadge';
+import { ROLE_LABELS, canAccessTab } from '../lib/permissions';
 
 export type ActiveTab =
   | 'dashboard'
@@ -62,17 +63,12 @@ export const TAB_LABELS: Partial<Record<ActiveTab, string>> = {
   produtos: 'Produtos',
   lucro: 'Resultados',
   relatorios: 'Relatórios',
-  auditoria: 'Auditoria',
+  auditoria: 'Histórico de ações',
   usuarios: 'Usuários',
   config: 'Configurações',
 };
 
-export const ROLE_LABELS: Record<string, string> = {
-  superadmin: 'Superadmin',
-  admin: 'Administrador',
-  operador: 'Operador',
-  entregador: 'Entregador',
-};
+export { ROLE_LABELS } from '../lib/permissions';
 
 /** Iniciais para o avatar (ignora textos entre parênteses). */
 export function userInitials(name?: string) {
@@ -114,12 +110,11 @@ export const Navbar: React.FC<NavbarProps> = ({
     useErp();
 
   const { currentUser, logout } = useAuth();
-  const isSuperadmin = currentUser?.role === 'superadmin';
-  const isAdminOrSuper = isSuperadmin || currentUser?.role === 'admin';
+  const role = currentUser?.role;
   const cashOpen = cashRegister?.status === 'aberto';
   const firstName = currentUser?.name.replace(/\s*\(.*?\)/g, '').split(' ')[0] || '';
 
-  const sections: { title: string; items: NavItem[] }[] = [
+  const allSections: { title: string; items: NavItem[] }[] = [
     {
       title: 'Operação',
       items: [
@@ -168,11 +163,14 @@ export const Navbar: React.FC<NavbarProps> = ({
     {
       title: 'Sistema',
       items: [
-        ...(isAdminOrSuper ? [{ id: 'usuarios' as ActiveTab, icon: UserCog }] : []),
+        { id: 'usuarios', icon: UserCog },
         { id: 'config', icon: Settings },
       ],
     },
   ];
+  const sections = allSections
+    .map((section) => ({ ...section, items: section.items.filter((item) => canAccessTab(role, item.id)) }))
+    .filter((section) => section.items.length > 0);
 
   const handleSelectTab = (tab: ActiveTab) => {
     setActiveTab(tab);
@@ -182,7 +180,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   const bottomItems: { id: ActiveTab | 'menu'; label: string; icon: React.ElementType; count?: number }[] = [
     { id: 'dashboard', label: 'Início', icon: LayoutDashboard },
     { id: 'em_andamento', label: 'Entregas', icon: Truck, count: inProgressDeliveriesCount },
-    { id: 'estoque', label: 'Estoque', icon: Package },
+    canAccessTab(role, 'estoque')
+      ? { id: 'estoque', label: 'Estoque', icon: Package }
+      : { id: 'caixa', label: 'Caixa', icon: Wallet },
     { id: 'menu', label: 'Menu', icon: Menu },
   ];
 
@@ -263,7 +263,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             <SyncStatusBadge />
 
-            {isSuperadmin ? (
+            {role === 'superadmin' ? (
               <button
                 id="header-supabase-btn"
                 onClick={onOpenSupabase}
@@ -291,7 +291,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <div className="hidden md:flex items-center gap-1 pl-2 ml-1 border-l border-slate-200">
                 <button
                   type="button"
-                  onClick={() => isAdminOrSuper && handleSelectTab('usuarios')}
+                  onClick={() => canAccessTab(role, 'usuarios') && handleSelectTab('usuarios')}
                   className="flex items-center gap-2 rounded-lg p-1 hover:bg-slate-50"
                   title={currentUser.name}
                 >
@@ -417,7 +417,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <div className="text-sm font-medium text-white truncate">
                 {currentUser?.name.replace(/\s*\(.*?\)/g, '') || 'ErpGLP'}
               </div>
-              <div className="text-xs text-slate-500">{ROLE_LABELS[currentUser?.role || ''] || ''}</div>
+              <div className="text-xs text-slate-500">{currentUser ? ROLE_LABELS[currentUser.role] || currentUser.role : ''}</div>
             </div>
           </div>
 

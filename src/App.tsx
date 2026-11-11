@@ -23,8 +23,7 @@ import { SupabaseModal } from './components/SupabaseModal';
 import { AppFooter } from './components/AppFooter';
 import { OfflineBanner } from './components/SyncStatusBadge';
 import { RefreshCw, ArrowLeft, ChevronRight, Home } from 'lucide-react';
-
-const ADMIN_TABS: ActiveTab[] = ['usuarios'];
+import { canAccessTab } from './lib/permissions';
 
 /** Lê a tela atual do endereço (#/estoque), permitindo atualizar a página sem perder a tela. */
 function readTabFromHash(): ActiveTab {
@@ -34,8 +33,8 @@ function readTabFromHash(): ActiveTab {
 
 const MainLayout: React.FC = () => {
   const { currentUser } = useAuth();
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'superadmin';
-  const canOpen = useCallback((tab: ActiveTab) => isAdmin || !ADMIN_TABS.includes(tab), [isAdmin]);
+  const role = currentUser?.role;
+  const canOpen = useCallback((tab: ActiveTab) => canAccessTab(role, tab), [role]);
 
   const [activeTab, setActiveTabState] = useState<ActiveTab>(() => {
     const tab = readTabFromHash();
@@ -52,7 +51,10 @@ const MainLayout: React.FC = () => {
     const onPopState = () => {
       const tab = readTabFromHash();
       historyDepth.current = Math.max(0, historyDepth.current - 1);
-      setActiveTabState(canOpen(tab) ? tab : 'dashboard');
+      const allowed = canOpen(tab) ? tab : 'dashboard';
+      // Endereço de uma tela sem permissão volta para o início
+      if (allowed !== tab) window.history.replaceState({ tab: allowed }, '', `#/${allowed}`);
+      setActiveTabState(allowed);
       setMobileMenuOpen(false);
     };
     window.addEventListener('popstate', onPopState);
@@ -145,35 +147,35 @@ const MainLayout: React.FC = () => {
             />
           )}
 
-          {activeTab === 'em_andamento' && (
+          {activeTab === 'em_andamento' && canOpen('em_andamento') && (
             <ActiveDeliveriesView onOpenNewSale={() => setIsNewSaleOpen(true)} />
           )}
 
-          {activeTab === 'historico_vendas' && <SalesHistoryView />}
+          {activeTab === 'historico_vendas' && canOpen('historico_vendas') && <SalesHistoryView />}
 
-          {activeTab === 'estoque' && <StockView />}
+          {activeTab === 'estoque' && canOpen('estoque') && <StockView />}
 
-          {activeTab === 'caixa' && <CashRegisterView />}
+          {activeTab === 'caixa' && canOpen('caixa') && <CashRegisterView />}
 
-          {activeTab === 'receber' && <ReceivablesView />}
+          {activeTab === 'receber' && canOpen('receber') && <ReceivablesView />}
 
-          {activeTab === 'pagar' && <PayablesView />}
+          {activeTab === 'pagar' && canOpen('pagar') && <PayablesView />}
 
-          {activeTab === 'despesas' && <ExpensesView />}
+          {activeTab === 'despesas' && canOpen('despesas') && <ExpensesView />}
 
-          {activeTab === 'lucro' && <ProfitView />}
+          {activeTab === 'lucro' && canOpen('lucro') && <ProfitView />}
 
-          {activeTab === 'relatorios' && <ReportsView />}
+          {activeTab === 'relatorios' && canOpen('relatorios') && <ReportsView />}
 
-          {activeTab === 'auditoria' && <AuditView />}
+          {activeTab === 'auditoria' && canOpen('auditoria') && <AuditView />}
 
-          {activeTab === 'clientes' && <ClientsView />}
+          {activeTab === 'clientes' && canOpen('clientes') && <ClientsView />}
 
-          {activeTab === 'produtos' && <ProductsView />}
+          {activeTab === 'produtos' && canOpen('produtos') && <ProductsView />}
 
-          {activeTab === 'usuarios' && <UsersManagementView />}
+          {activeTab === 'usuarios' && canOpen('usuarios') && <UsersManagementView />}
 
-          {activeTab === 'config' && <ConfigView />}
+          {activeTab === 'config' && canOpen('config') && <ConfigView />}
         </main>
 
         <AppFooter className="border-t border-slate-200 mx-4 sm:mx-6 lg:mx-8 pt-4 pb-28 lg:pb-6" />

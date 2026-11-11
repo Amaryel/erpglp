@@ -20,6 +20,7 @@ import { useErp } from '../context/ErpContext';
 import { NumberField } from './NumberField';
 import { PaymentMethod, PaymentSplit, SaleType } from '../types';
 import { PaymentSplitEditor } from './PaymentSplitEditor';
+import { CashClosedNotice } from './CashClosedNotice';
 import { summarizePayments, normalizePayments } from '../lib/payments';
 import { formatCurrency, maskPhone, formatPhone } from '../utils/formatters';
 
@@ -768,6 +769,7 @@ export const NewSaleModal: React.FC<NewSaleModalProps> = ({
                 onChange={setPayments}
                 missingClientForFiado={!selectedClientId}
               />
+              {balcaoSummary.paid > 0 && cashRegister?.status !== 'aberto' && <CashClosedNotice />}
             </div>
           )}
 

@@ -540,7 +540,7 @@ UPDATE public.users SET has_defined_password = false WHERE auth_user_id IS NULL;
 
 ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE public.users ADD CONSTRAINT users_role_check
-  CHECK (role IN ('superadmin', 'admin', 'operador', 'entregador')) NOT VALID;
+  CHECK (role IN ('superadmin', 'admin', 'operador', 'entregador', 'atendente')) NOT VALID;
 ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_status_check;
 ALTER TABLE public.users ADD CONSTRAINT users_status_check
   CHECK (status IN ('ativo', 'bloqueado')) NOT VALID;
@@ -688,7 +688,7 @@ BEGIN
   IF v_caller IS NULL OR v_caller NOT IN ('admin', 'superadmin') THEN
     RAISE EXCEPTION 'Acesso negado: apenas administradores podem cadastrar usuários.' USING ERRCODE = '42501';
   END IF;
-  IF p_role IS NULL OR p_role NOT IN ('superadmin', 'admin', 'operador', 'entregador') THEN
+  IF p_role IS NULL OR p_role NOT IN ('superadmin', 'admin', 'operador', 'entregador', 'atendente') THEN
     RAISE EXCEPTION 'Nível de acesso inválido.' USING ERRCODE = '22023';
   END IF;
   IF p_role = 'superadmin' AND v_caller <> 'superadmin' THEN
@@ -735,7 +735,7 @@ BEGIN
   IF v_target.role = 'superadmin' AND v_caller <> 'superadmin' THEN
     RAISE EXCEPTION 'Acesso negado: apenas o Superadmin pode alterar um Superadmin.' USING ERRCODE = '42501';
   END IF;
-  IF p_role IS NULL OR p_role NOT IN ('superadmin', 'admin', 'operador', 'entregador') THEN
+  IF p_role IS NULL OR p_role NOT IN ('superadmin', 'admin', 'operador', 'entregador', 'atendente') THEN
     RAISE EXCEPTION 'Nível de acesso inválido.' USING ERRCODE = '22023';
   END IF;
   IF p_role = 'superadmin' AND v_caller <> 'superadmin' THEN
@@ -1137,6 +1137,58 @@ ALTER TABLE public.products ADD COLUMN IF NOT EXISTS tax_cost NUMERIC NOT NULL D
 UPDATE public.products
    SET base_cost = cost_price
  WHERE base_cost = 0 AND freight_cost = 0 AND tax_cost = 0 AND cost_price > 0;
+
+-- ==============================================================================
+-- 29. PERFIL "ATENDENTE DE CAIXA" + HISTÓRICO DE AÇÕES SÓ PARA O SUPERADMIN
+-- O atendente lança vendas e deliverys e abre/fecha o caixa. Não lê nem altera
+-- contas a pagar, despesas, fornecedores, cadastro de produtos e ajustes de estoque.
+-- ==============================================================================
+ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE public.users ADD CONSTRAINT users_role_check
+  CHECK (role IN ('superadmin', 'admin', 'operador', 'entregador', 'atendente')) NOT VALID;
+
+-- Usuário ativo com acesso além do caixa (todos, menos o atendente)
+CREATE OR REPLACE FUNCTION public.erp_has_full_access()
+RETURNS BOOLEAN
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+AS $$ SELECT COALESCE(public.erp_current_role() IN ('superadmin', 'admin', 'operador', 'entregador'), false) $$;
+REVOKE ALL ON FUNCTION public.erp_has_full_access() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.erp_has_full_access() TO authenticated;
+
+DO $$
+DECLARE
+  tbl TEXT;
+BEGIN
+  -- Financeiro e cadastros sensíveis: atendente não lê nem grava
+  FOREACH tbl IN ARRAY ARRAY['payables', 'expenses', 'suppliers'] LOOP
+    EXECUTE format('DROP POLICY IF EXISTS erp_select ON public.%I', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS erp_insert ON public.%I', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS erp_update ON public.%I', tbl);
+    EXECUTE format('CREATE POLICY erp_select ON public.%I FOR SELECT TO authenticated USING ((SELECT public.erp_has_full_access()))', tbl);
+    EXECUTE format('CREATE POLICY erp_insert ON public.%I FOR INSERT TO authenticated WITH CHECK ((SELECT public.erp_has_full_access()))', tbl);
+    EXECUTE format('CREATE POLICY erp_update ON public.%I FOR UPDATE TO authenticated USING ((SELECT public.erp_has_full_access())) WITH CHECK ((SELECT public.erp_has_full_access()))', tbl);
+  END LOOP;
+  FOREACH tbl IN ARRAY ARRAY['payables', 'expenses'] LOOP
+    EXECUTE format('DROP POLICY IF EXISTS erp_delete ON public.%I', tbl);
+    EXECUTE format('CREATE POLICY erp_delete ON public.%I FOR DELETE TO authenticated USING ((SELECT public.erp_has_full_access()))', tbl);
+  END LOOP;
+
+  -- Produtos e ajustes/conferências de estoque: atendente só consulta
+  FOREACH tbl IN ARRAY ARRAY['products', 'stock_adjustments', 'stock_conferences'] LOOP
+    EXECUTE format('DROP POLICY IF EXISTS erp_insert ON public.%I', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS erp_update ON public.%I', tbl);
+    EXECUTE format('CREATE POLICY erp_insert ON public.%I FOR INSERT TO authenticated WITH CHECK ((SELECT public.erp_has_full_access()))', tbl);
+    EXECUTE format('CREATE POLICY erp_update ON public.%I FOR UPDATE TO authenticated USING ((SELECT public.erp_has_full_access())) WITH CHECK ((SELECT public.erp_has_full_access()))', tbl);
+  END LOOP;
+  DROP POLICY IF EXISTS erp_delete ON public.products;
+  CREATE POLICY erp_delete ON public.products FOR DELETE TO authenticated USING ((SELECT public.erp_has_full_access()));
+END $$;
+
+-- Histórico de ações: todos registram, só o Superadmin consulta
+DROP POLICY IF EXISTS erp_select ON public.audit_logs;
+CREATE POLICY erp_select ON public.audit_logs FOR SELECT TO authenticated
+  USING ((SELECT public.erp_is_superadmin()));
+CREATE INDEX IF NOT EXISTS audit_logs_timestamp_idx ON public.audit_logs (timestamp DESC);
 `;
 
 // Helper conversion functions

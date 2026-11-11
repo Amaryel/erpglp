@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useAuth, MIN_PASSWORD_LENGTH } from '../context/AuthContext';
 import { AppUser, UserRole, UserStatus } from '../types';
+import { ROLE_DESCRIPTIONS, ROLE_LABELS } from '../lib/permissions';
 import { formatDate } from '../utils/formatters';
 
 export const UsersManagementView: React.FC = () => {
@@ -192,8 +193,7 @@ export const UsersManagementView: React.FC = () => {
     }
   };
 
-  const roleLabel = (role: UserRole) =>
-    role === 'superadmin' ? 'Superadmin' : role === 'admin' ? 'Administrador' : role === 'entregador' ? 'Entregador' : 'Operador';
+  const roleLabel = (role: UserRole) => ROLE_LABELS[role] || role;
 
   const renderIdentity = (u: AppUser) => {
     const isSuper = u.role === 'superadmin';
@@ -532,6 +532,7 @@ export const UsersManagementView: React.FC = () => {
                   onChange={(e) => setNewRole(e.target.value as UserRole)}
                   className="w-full border border-slate-300 rounded-xl p-2.5 font-medium bg-white"
                 >
+                  <option value="atendente">Atendente de caixa (só vendas, deliverys e caixa)</option>
                   <option value="operador">Operador (Vendas, Estoque, Entregas)</option>
                   <option value="admin">Administrador (Controle Total de Operações)</option>
                   <option value="entregador">Entregador (Apenas Rota e Entregas)</option>
@@ -539,6 +540,7 @@ export const UsersManagementView: React.FC = () => {
                     <option value="superadmin">Superadmin (Acesso Irrestrito & Banco de Dados)</option>
                   )}
                 </select>
+                <p className="mt-1 text-[11px] text-slate-500">{ROLE_DESCRIPTIONS[newRole]}</p>
               </div>
 
               <div>
@@ -627,6 +629,7 @@ export const UsersManagementView: React.FC = () => {
                     onChange={(e) => setEditRole(e.target.value as UserRole)}
                     className="w-full border border-slate-300 rounded-xl p-2.5 font-medium bg-white"
                   >
+                    <option value="atendente">Atendente de caixa</option>
                     <option value="operador">Operador (Vendas, Estoque, Entregas)</option>
                     <option value="admin">Administrador (Controle Total)</option>
                     <option value="entregador">Entregador</option>
@@ -634,6 +637,7 @@ export const UsersManagementView: React.FC = () => {
                       <option value="superadmin">Superadmin (Acesso Irrestrito & Banco de Dados)</option>
                     )}
                   </select>
+                  <p className="mt-1 text-[11px] text-slate-500">{ROLE_DESCRIPTIONS[editRole]}</p>
                 </div>
               )}
 

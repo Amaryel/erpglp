@@ -22,6 +22,8 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useErp } from '../context/ErpContext';
+import { useAuth } from '../context/AuthContext';
+import { canSeeFinance } from '../lib/permissions';
 import { Sale, SaleStatus, SaleType, PaymentMethod } from '../types';
 import { formatCurrency, formatDate, formatPaymentMethod } from '../utils/formatters';
 
@@ -29,6 +31,8 @@ type DateFilter = 'hoje' | 'ontem' | '7dias' | 'mes' | 'todos';
 
 export const SalesHistoryView: React.FC = () => {
   const { sales, cancelSale, settings } = useErp();
+  const { currentUser } = useAuth();
+  const finance = canSeeFinance(currentUser?.role);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFilter, setDateFilter] = useState<DateFilter>('todos');
@@ -176,7 +180,7 @@ export const SalesHistoryView: React.FC = () => {
       </div>
 
       {/* Summary KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className={`grid grid-cols-2 gap-3 ${finance ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
         <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
           <p className="text-[11px] font-medium text-slate-500">Vendas no Filtro</p>
           <div className="flex items-baseline gap-1 mt-1">
@@ -194,6 +198,7 @@ export const SalesHistoryView: React.FC = () => {
           </div>
         </div>
 
+        {finance && (
         <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
           <p className="text-[11px] font-medium text-slate-500">Lucro Bruto (Margem)</p>
           <div className="flex items-baseline gap-1 mt-1">
@@ -205,6 +210,7 @@ export const SalesHistoryView: React.FC = () => {
             </span>
           </div>
         </div>
+        )}
 
         <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
           <p className="text-[11px] font-medium text-slate-500">Vasilhames (Cheio / Vazio)</p>
@@ -575,6 +581,8 @@ export const SalesHistoryView: React.FC = () => {
                 </span>
               </div>
 
+              {finance && (
+              <>
               <div className="pt-1 text-[11px] text-slate-500 flex justify-between">
                 <span>Custo das Mercadorias (CMV):</span>
                 <span>{formatCurrency(selectedSale.totalCost)}</span>
@@ -589,6 +597,8 @@ export const SalesHistoryView: React.FC = () => {
                   %)
                 </span>
               </div>
+              </>
+              )}
             </div>
 
             {/* Actions in details */}
